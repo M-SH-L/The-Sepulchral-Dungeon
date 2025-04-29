@@ -2,8 +2,9 @@
 import React from 'react';
 import { DungeonTile } from './dungeon-generator';
 import { cn } from '@/lib/utils';
+import type * as THREE from 'three'; // Import THREE namespace for Mesh type
 
-interface InteractableObject {
+interface InteractableObjectData {
     mesh: THREE.Mesh;
     id: number;
     // Add other relevant properties if needed, like position
@@ -15,7 +16,7 @@ interface MinimapProps {
     playerZ: number; // Player's grid Z coordinate
     viewRadius: number; // How many tiles to show around the player
     tileSize: number; // World scale tile size (used for object positioning)
-    interactableObjects: InteractableObject[]; // Pass interactable objects
+    interactableObjects: InteractableObjectData[]; // Use the defined interface
 }
 
 const Minimap: React.FC<MinimapProps> = ({
@@ -46,32 +47,35 @@ const Minimap: React.FC<MinimapProps> = ({
 
             // Check for interactable objects in this world tile
             const objectsInTile = interactableObjects.filter(obj => {
+                 // Correctly calculate object's grid position based on its world position
                  const objGridX = Math.floor(obj.mesh.position.x / tileSize + 0.5);
                  const objGridZ = Math.floor(obj.mesh.position.z / tileSize + 0.5);
                  return objGridX === worldX && objGridZ === worldZ;
             });
 
-            if (objectsInTile.length > 0) {
+            // Mark tile if an object is present and it's not the player's tile
+            if (objectsInTile.length > 0 && !(y === viewRadius && x === viewRadius)) {
                  minimapGrid[y][x] = 'O'; // Mark tile as containing an object
             }
         }
     }
 
-    // Place the player marker at the center
+    // Place the player marker at the center, overriding any object marker
     minimapGrid[viewRadius][viewRadius] = 'P';
 
     // Determine the Tailwind class for each tile
     const getTileClass = (tile: DungeonTile | 'P' | 'O'): string => {
         switch (tile) {
             case DungeonTile.Floor:
+                return 'bg-secondary/60'; // Slightly more opaque floor
             case DungeonTile.Corridor:
-                return 'bg-secondary/50'; // Floor/Corridor color (lighter sepia)
+                return 'bg-muted/60'; // Different color for corridors
             case DungeonTile.Wall:
                 return 'bg-primary/70'; // Wall color (darker brown)
             case 'P':
-                return 'bg-green-500'; // Player marker color (adjust as needed)
+                return 'bg-green-500 border border-green-700'; // Player marker color with border
             case 'O':
-                return 'bg-yellow-500'; // Object marker color (adjust as needed)
+                return 'bg-yellow-500 border border-yellow-700'; // Object marker color with border
             default:
                 return 'bg-black'; // Default/unknown
         }
@@ -92,9 +96,10 @@ const Minimap: React.FC<MinimapProps> = ({
                     <div
                         key={`${x}-${y}`}
                         className={cn(
-                            'w-[10px] h-[10px]', // Fixed size
+                            'w-[10px] h-[10px] rounded-sm', // Fixed size, slight rounding
                             getTileClass(tile)
                         )}
+                        title={`Tile: ${tile} at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})`} // Add tooltip for debugging/info
                     />
                 ))
             )}
@@ -103,3 +108,5 @@ const Minimap: React.FC<MinimapProps> = ({
 };
 
 export default Minimap;
+
+    
