@@ -203,8 +203,8 @@ const Game: React.FC = () => {
         // --- Scene Setup ---
         const scene = new THREE.Scene();
         sceneRef.current = scene;
-        scene.background = new THREE.Color(0x4a3026);
-        scene.fog = new THREE.Fog(0x4a3026, 3, 15);
+        scene.background = new THREE.Color(0x4a3026); // Sepia background
+        scene.fog = new THREE.Fog(0x4a3026, 3, 15); // Sepia fog
 
         // --- Camera Setup ---
         const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -222,8 +222,14 @@ const Game: React.FC = () => {
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 0.9;
 
+        // Apply sepia filter using post-processing
+        // Note: Three.js doesn't have a built-in sepia filter.
+        // We can achieve this by adjusting lighting and materials, or using a post-processing pass.
+        // For simplicity, we'll rely on the sepia background, fog, and material colors.
+        // A more advanced approach would involve THREE.ShaderPass with a sepia shader.
+
         // --- Lighting Setup ---
-        const ambientLight = new THREE.AmbientLight(0x504030, 0.3);
+        const ambientLight = new THREE.AmbientLight(0x504030, 0.3); // Dim sepia ambient light
         scene.add(ambientLight);
 
         // --- Player Setup ---
@@ -273,9 +279,10 @@ const Game: React.FC = () => {
         const wallGeometry = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
         const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
-        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x704214, roughness: 0.9, metalness: 0.1 });
-        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x967969, side: THREE.DoubleSide, roughness: 1.0 });
-        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x6a5a4a, side: THREE.DoubleSide, roughness: 1.0 });
+        // Adjusted material colors for a stronger sepia feel
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x704214, roughness: 0.9, metalness: 0.1 }); // Darker brown wall
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x967969, side: THREE.DoubleSide, roughness: 1.0 }); // Muted sepia floor
+        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x6A4F3A, side: THREE.DoubleSide, roughness: 1.0 }); // Sepia ceiling
 
         const dungeonGroup = dungeonGroupRef.current;
         torchesRef.current = [];
@@ -301,7 +308,7 @@ const Game: React.FC = () => {
                     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
                     ceiling.position.set(tileCenterX, WALL_HEIGHT, tileCenterZ);
                     ceiling.rotation.x = Math.PI / 2;
-                    ceiling.receiveShadow = true;
+                    ceiling.receiveShadow = true; // Ceiling should receive shadows
                     dungeonGroup.add(ceiling);
 
                      let isNearWall = false;
@@ -313,21 +320,28 @@ const Game: React.FC = () => {
                      }
 
                      if (isNearWall && tile !== DungeonTile.Corridor && Math.random() < TORCH_PROBABILITY) {
-                        const torchPosition = new THREE.Vector3(tileCenterX, 0, tileCenterZ);
-                         const torchData = createTorch(torchPosition);
-                         dungeonGroup.add(torchData.group);
-                         torchesRef.current.push(torchData);
+                        // Find a wall adjacent to this floor/corridor tile to place the torch
+                        let torchPos = new THREE.Vector3(tileCenterX, 0, tileCenterZ);
+                        if (dungeonData[z]?.[x+1] === DungeonTile.Wall) torchPos.x += TILE_SIZE/2 - 0.1;
+                        else if (dungeonData[z]?.[x-1] === DungeonTile.Wall) torchPos.x -= TILE_SIZE/2 - 0.1;
+                        else if (dungeonData[z+1]?.[x] === DungeonTile.Wall) torchPos.z += TILE_SIZE/2 - 0.1;
+                        else if (dungeonData[z-1]?.[x] === DungeonTile.Wall) torchPos.z -= TILE_SIZE/2 - 0.1;
+                        else torchPos.x += 0.1; // fallback placement slightly offset
+
+                        const torchData = createTorch(torchPos);
+                        dungeonGroup.add(torchData.group);
+                        torchesRef.current.push(torchData);
                     }
 
                     if (tile === DungeonTile.Floor && Math.random() < 0.04) {
-                        const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0);
-                        const objectMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7, metalness: 0.1 });
+                        const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0); // Simple low-poly shape
+                        const objectMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7, metalness: 0.1 }); // Deep brown accent
                         const placeholderObject = new THREE.Mesh(objectGeometry, objectMaterial);
                         placeholderObject.position.set(tileCenterX, 0.3, tileCenterZ);
                         placeholderObject.castShadow = true;
                         placeholderObject.receiveShadow = true;
-                         placeholderObject.rotation.x = Math.random() * Math.PI;
-                         placeholderObject.rotation.y = Math.random() * Math.PI;
+                        placeholderObject.rotation.x = Math.random() * Math.PI;
+                        placeholderObject.rotation.y = Math.random() * Math.PI;
                         dungeonGroup.add(placeholderObject);
                         interactableObjectsRef.current.push({
                             mesh: placeholderObject,
@@ -427,29 +441,27 @@ const Game: React.FC = () => {
             playerRef.current.rotation.y = playerRotationY.current; // Apply rotation to the player group
 
             // --- Player Movement ---
-            const moveDirection = new THREE.Vector3();
-            const strafeDirection = new THREE.Vector3();
+            const moveDirection = new THREE.Vector3(); // Forward/Backward direction relative to player rotation
+            const strafeDirection = new THREE.Vector3(); // Left/Right strafe direction relative to player rotation
 
             // Calculate forward/backward movement direction based on player's Y rotation
-            moveDirection.set(
-                 Math.sin(playerRotationY.current),
-                 0,
-                 Math.cos(playerRotationY.current)
-            ).normalize();
+            // Forward is along negative Z axis *in the player's local space*
+            moveDirection.setFromMatrixColumn(playerRef.current.matrix, 2); // Get the forward vector (local Z)
+            moveDirection.negate(); // Make it point forward
+            moveDirection.y = 0; // Ensure movement is planar
+            moveDirection.normalize();
 
             // Calculate left/right strafe direction (perpendicular to forward)
-            strafeDirection.set(
-                Math.sin(playerRotationY.current + Math.PI / 2), // 90 degrees offset
-                0,
-                Math.cos(playerRotationY.current + Math.PI / 2)
-           ).normalize();
-
+            // Right is along positive X axis *in the player's local space*
+            strafeDirection.setFromMatrixColumn(playerRef.current.matrix, 0); // Get the right vector (local X)
+            strafeDirection.y = 0; // Ensure movement is planar
+            strafeDirection.normalize();
 
             const combinedMove = new THREE.Vector3();
             if (moveForward.current) combinedMove.add(moveDirection);
             if (moveBackward.current) combinedMove.sub(moveDirection);
-            if (moveLeftStrafe.current) combinedMove.add(strafeDirection); // Strafe left
-            if (moveRightStrafe.current) combinedMove.sub(strafeDirection); // Strafe right
+            if (moveLeftStrafe.current) combinedMove.sub(strafeDirection); // Strafe left (negative X)
+            if (moveRightStrafe.current) combinedMove.add(strafeDirection); // Strafe right (positive X)
 
 
             if (combinedMove.lengthSq() > 0) { // Only move if there's input
@@ -464,28 +476,27 @@ const Game: React.FC = () => {
                  if (isPositionValid(nextPosition)) {
                     playerRef.current.position.copy(nextPosition);
                  } else {
-                     // Try moving only on X axis relative to world
-                     const moveX = moveAmount.clone();
-                     moveX.z = 0;
+                     // Try moving only on X axis relative to world (using the calculated X component of moveAmount)
+                     const moveX = new THREE.Vector3(moveAmount.x, 0, 0);
                      const nextPositionX = currentPosition.clone().add(moveX);
 
-                     // Try moving only on Z axis relative to world
-                     const moveZ = moveAmount.clone();
-                     moveZ.x = 0;
+                     // Try moving only on Z axis relative to world (using the calculated Z component of moveAmount)
+                     const moveZ = new THREE.Vector3(0, 0, moveAmount.z);
                      const nextPositionZ = currentPosition.clone().add(moveZ);
 
-                     let movedX = false;
+                     let moved = false;
                      // Check X movement possibility (slide along Z wall)
                      if (moveX.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
                          playerRef.current.position.x = nextPositionX.x;
-                         movedX = true;
+                         moved = true;
                      }
 
                      // Check Z movement possibility (slide along X wall)
-                     // Allow Z move even if X move was successful (allows sliding into corners)
                      if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZ)) {
                          playerRef.current.position.z = nextPositionZ.z;
+                         moved = true;
                      }
+                     // If sliding didn't work on either axis, don't move at all for this frame.
                  }
             }
 
