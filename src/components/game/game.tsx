@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { generateDungeon, DungeonTile } from './dungeon-generator';
+import { useToast } from '@/hooks/use-toast'; // Import useToast
 
 interface InteractableObject {
     mesh: THREE.Mesh;
@@ -46,6 +47,7 @@ const Game: React.FC = () => {
     const moveRight = useRef(false);
     const velocity = useRef(new THREE.Vector3());
     const direction = useRef(new THREE.Vector3());
+    const { toast } = useToast(); // Get toast function
 
     // Generate Dungeon Data - Memoize to prevent regeneration on every render
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 5, 3, 7), []);
@@ -134,10 +136,11 @@ const Game: React.FC = () => {
         directionalLight.shadow.camera.near = 0.5;
         directionalLight.shadow.camera.far = 50;
          // Adjust shadow camera frustum if needed
-         directionalLight.shadow.camera.left = -DUNGEON_SIZE_WIDTH / 2;
-         directionalLight.shadow.camera.right = DUNGEON_SIZE_WIDTH / 2;
-         directionalLight.shadow.camera.top = DUNGEON_SIZE_HEIGHT / 2;
-         directionalLight.shadow.camera.bottom = -DUNGEON_SIZE_HEIGHT / 2;
+         directionalLight.shadow.camera.left = -DUNGEON_SIZE_WIDTH * TILE_SIZE / 2;
+         directionalLight.shadow.camera.right = DUNGEON_SIZE_WIDTH * TILE_SIZE / 2;
+         directionalLight.shadow.camera.top = DUNGEON_SIZE_HEIGHT * TILE_SIZE / 2;
+         directionalLight.shadow.camera.bottom = -DUNGEON_SIZE_HEIGHT * TILE_SIZE / 2;
+         directionalLight.shadow.camera.updateProjectionMatrix(); // Update shadow camera after adjustments
         scene.add(directionalLight);
          scene.add(directionalLight.target); // Target for directional light
 
@@ -154,26 +157,42 @@ const Game: React.FC = () => {
         let foundStart = false;
         for (let z = 1; z < dungeonData.length - 1 && !foundStart; z++) { // Avoid edges
             for (let x = 1; x < dungeonData[z].length - 1 && !foundStart; x++) {
-                if (dungeonData[z][x] === DungeonTile.Floor) {
+                if (dungeonData[z][x] === DungeonTile.Floor || dungeonData[z][x] === DungeonTile.Corridor) {
                     // Check neighbors to ensure it's not isolated if possible
-                    if (
-                        (dungeonData[z + 1]?.[x] !== DungeonTile.Wall) ||
-                        (dungeonData[z - 1]?.[x] !== DungeonTile.Wall) ||
-                        (dungeonData[z]?.[x + 1] !== DungeonTile.Wall) ||
-                        (dungeonData[z]?.[x - 1] !== DungeonTile.Wall)
-                    ) {
+                    const isConnected = [
+                        dungeonData[z + 1]?.[x],
+                        dungeonData[z - 1]?.[x],
+                        dungeonData[z]?.[x + 1],
+                        dungeonData[z]?.[x - 1]
+                    ].some(neighbor => neighbor && neighbor !== DungeonTile.Wall);
+
+                    if (isConnected) {
                         startX = x;
                         startZ = z;
                         foundStart = true;
+                        break; // Exit inner loop once found
                     }
                 }
             }
         }
-        // If no suitable floor found (highly unlikely), use fallback center (might be wall)
+        // If no suitable floor/corridor found (highly unlikely), use fallback center (might be wall)
          if (!foundStart) {
-             console.warn("No suitable starting floor tile found, using center fallback.");
-             startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
-             startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
+             console.warn("No suitable starting floor/corridor tile found, using center fallback.");
+             // Try to find *any* non-wall tile as a last resort
+             for (let z = 1; z < dungeonData.length - 1 && !foundStart; z++) {
+                 for (let x = 1; x < dungeonData[z].length - 1 && !foundStart; x++) {
+                     if (dungeonData[z][x] !== DungeonTile.Wall) {
+                         startX = x;
+                         startZ = z;
+                         foundStart = true;
+                     }
+                 }
+             }
+             // If STILL not found, use absolute center
+             if (!foundStart) {
+                 startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
+                 startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
+             }
          }
 
         // Position player group at center of the start tile
@@ -215,7 +234,7 @@ const Game: React.FC = () => {
                     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
                     ceiling.position.set(tileCenterX, WALL_HEIGHT, tileCenterZ); // Position ceiling at wall height
                     ceiling.rotation.x = Math.PI / 2; // Rotate to face down
-                    ceiling.receiveShadow = true;
+                    ceiling.receiveShadow = true; // Ceilings usually don't cast shadows but can receive them
                     dungeonGroup.add(ceiling);
 
 
@@ -247,24 +266,30 @@ const Game: React.FC = () => {
             setIsPointerLocked(controls.isLocked);
         };
         const onPointerLockError = (event: Event) => {
-            console.error('PointerLockControls: Error locking pointer.', event);
+            console.warn('PointerLockControls: Error locking pointer.', event);
             setIsPointerLocked(false);
+            // Inform user about the pointer lock issue via toast
+             toast({
+                 title: "Pointer Lock Failed",
+                 description: "Could not lock pointer. Ensure the browser tab has focus and pointer lock is allowed.",
+                 variant: "destructive", // Use destructive variant for errors
+             });
         };
 
         controls.addEventListener('lock', onPointerLockChange);
         controls.addEventListener('unlock', onPointerLockChange);
-        document.addEventListener('pointerlockerror', onPointerLockError);
+        // Use document event listener for pointerlockerror
+        document.addEventListener('pointerlockerror', onPointerLockError, false);
 
         // Click to lock pointer
         const lockPointer = () => {
             if (!isPopupOpen) { // Only lock if popup is not open
-                try {
-                    controls.lock();
-                } catch (error) {
-                    console.error("Failed to lock pointer:", error);
-                    // Optionally inform the user that pointer lock failed
-                    alert("Could not lock pointer. This might be due to browser settings or sandboxing restrictions.");
-                }
+                 try {
+                     controls.lock();
+                 } catch (error) {
+                     console.warn("Attempted to lock pointer, but failed:", error);
+                     // Toast notification handled by the onPointerLockError handler
+                 }
             }
         };
          currentMount.addEventListener('click', lockPointer);
@@ -385,19 +410,18 @@ const Game: React.FC = () => {
 
                      if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZFromX)) {
                           // If X was already valid, add Z movement to it.
-                          // Otherwise, try Z from the original position.
                          player.position.copy(nextPositionZFromX);
                          moved = true;
                       } else if (!moved && moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZ)) {
-                         // Fallback: try moving only Z from original if X wasn't valid
+                         // Fallback: try moving only Z from original if X wasn't valid and Z wasn't combined with X
                           player.position.copy(nextPositionZ);
                           moved = true;
                       }
 
                      // If neither X nor Z movement (or combined) is valid, the player doesn't move.
-                      if (!moved) {
+                     // if (!moved) {
                          // console.log("Blocked");
-                      }
+                     // }
                  }
 
 
@@ -428,7 +452,7 @@ const Game: React.FC = () => {
             }
 
 
-            rendererRef.current?.render(sceneRef.current, cameraRef.current);
+            rendererRef.current?.render(sceneRef.current!, cameraRef.current!); // Added non-null assertions
         };
 
         animate(); // Start animation loop
@@ -441,7 +465,8 @@ const Game: React.FC = () => {
              currentMount.removeEventListener('click', lockPointer);
             controlsRef.current?.removeEventListener('lock', onPointerLockChange);
             controlsRef.current?.removeEventListener('unlock', onPointerLockChange);
-            document.removeEventListener('pointerlockerror', onPointerLockError);
+            // Use document event listener for removal
+            document.removeEventListener('pointerlockerror', onPointerLockError, false);
             controlsRef.current?.dispose(); // Dispose controls
 
 
@@ -472,7 +497,7 @@ const Game: React.FC = () => {
              clock.stop(); // Stop the clock
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [handleInteraction, isPositionValid, dungeonData]); // Add dependencies that don't change frequently
+    }, [handleInteraction, isPositionValid, dungeonData, toast]); // Added toast to dependencies
 
      // Effect to handle popup closing and pointer locking
     useEffect(() => {
