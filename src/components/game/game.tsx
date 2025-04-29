@@ -3,13 +3,14 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
+// Removed PointerLockControls import
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
+import Minimap from './minimap'; // Import the new Minimap component
 
 interface InteractableObject {
     mesh: THREE.Mesh;
@@ -29,71 +30,67 @@ const PLAYER_RADIUS = 0.3;
 const INTERACTION_DISTANCE = 1.5;
 const CAMERA_EYE_LEVEL = PLAYER_HEIGHT * 0.9;
 const MOVE_SPEED = 3.5;
-const DUNGEON_SIZE_WIDTH = 30; // Increased size
-const DUNGEON_SIZE_HEIGHT = 30; // Increased size
+const ROTATION_SPEED = Math.PI * 0.6; // Radians per second for turning
+const DUNGEON_SIZE_WIDTH = 30;
+const DUNGEON_SIZE_HEIGHT = 30;
 const WALL_HEIGHT = 2.5;
 const TILE_SIZE = 1.0;
-const TORCH_PROBABILITY = 0.04; // Chance to place a torch on a floor tile near a wall
-const BASE_TORCH_LIGHT_INTENSITY = 1.5; // Base intensity for flicker
-const TORCH_LIGHT_DISTANCE = 5.0; // Increased distance
-const TORCH_LIGHT_COLOR = 0xffa54a; // Warm orange light
-const TORCH_HEIGHT_OFFSET = 1.2; // How high the torch flame is from the floor
-const FLICKER_SPEED = 5.0; // How fast the torch flickers
-const FLICKER_INTENSITY_VARIATION = 0.5; // How much the intensity changes
-const FLICKER_POSITION_VARIATION = 0.03; // How much the flame moves vertically
+const TORCH_PROBABILITY = 0.04;
+const BASE_TORCH_LIGHT_INTENSITY = 1.5;
+const TORCH_LIGHT_DISTANCE = 5.0;
+const TORCH_LIGHT_COLOR = 0xffa54a;
+const TORCH_HEIGHT_OFFSET = 1.2;
+const FLICKER_SPEED = 5.0;
+const FLICKER_INTENSITY_VARIATION = 0.5;
+const FLICKER_POSITION_VARIATION = 0.03;
+const PLAYER_GLOW_INTENSITY = 1.8; // Intensity of the light around the player
+const PLAYER_GLOW_DISTANCE = 4.0; // How far the player's light reaches
+const PLAYER_GLOW_COLOR = 0xffffff; // Neutral white light
+const MINIMAP_VIEW_RADIUS = 5; // How many tiles around the player to show on the minimap
 
-// Function to create a torch model and light
+// Function to create a torch model and light (unchanged)
 const createTorch = (position: THREE.Vector3): TorchData => {
     const torchGroup = new THREE.Group();
-
-    // Stick
     const stickGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1.0, 8);
-    const stickMaterial = new THREE.MeshStandardMaterial({ color: 0x5c3d2e, roughness: 0.8 }); // Darker wood
+    const stickMaterial = new THREE.MeshStandardMaterial({ color: 0x5c3d2e, roughness: 0.8 });
     const stickMesh = new THREE.Mesh(stickGeometry, stickMaterial);
-    stickMesh.position.y = 0.5; // Position stick slightly above ground
+    stickMesh.position.y = 0.5;
     stickMesh.castShadow = true;
     torchGroup.add(stickMesh);
-
-    // Flame (simple sphere for low poly)
     const flameGeometry = new THREE.SphereGeometry(0.1, 16, 8);
-    const flameMaterial = new THREE.MeshBasicMaterial({ color: TORCH_LIGHT_COLOR }); // Use BasicMaterial for unlit flame
+    const flameMaterial = new THREE.MeshBasicMaterial({ color: TORCH_LIGHT_COLOR });
     const flameMesh = new THREE.Mesh(flameGeometry, flameMaterial);
-    flameMesh.position.y = 1.0 + 0.1; // Position flame atop the stick
-    flameMesh.name = "torchFlame"; // Add name for animation lookup
+    flameMesh.position.y = 1.0 + 0.1;
+    flameMesh.name = "torchFlame";
     torchGroup.add(flameMesh);
-
-    // Point Light
     const pointLight = new THREE.PointLight(TORCH_LIGHT_COLOR, BASE_TORCH_LIGHT_INTENSITY, TORCH_LIGHT_DISTANCE);
-    pointLight.position.y = TORCH_HEIGHT_OFFSET; // Position light source near the flame
-    pointLight.castShadow = true; // Torches cast shadows
-    pointLight.shadow.mapSize.width = 256; // Lower resolution for performance
+    pointLight.position.y = TORCH_HEIGHT_OFFSET;
+    pointLight.castShadow = true;
+    pointLight.shadow.mapSize.width = 256;
     pointLight.shadow.mapSize.height = 256;
-    pointLight.shadow.bias = -0.01; // Adjust shadow bias if needed
-    pointLight.name = "torchLight"; // Add name for animation lookup
+    pointLight.shadow.bias = -0.01;
+    pointLight.name = "torchLight";
     torchGroup.add(pointLight);
-
-
     torchGroup.position.copy(position);
     return { group: torchGroup, light: pointLight, flame: flameMesh };
 };
 
-// HUD Component
+// HUD Component - Updated Controls
 const GameHUD: React.FC = () => {
     return (
-        <div className="absolute top-4 left-4 p-4 bg-background/70 text-foreground rounded-md shadow-lg text-sm border border-primary pointer-events-none">
+        <div className="absolute top-4 left-4 p-4 bg-background/70 text-foreground rounded-md shadow-lg text-sm border border-primary pointer-events-none z-10">
             <h3 className="font-bold mb-2 text-base">Controls</h3>
             <ul className="list-none space-y-1">
                 <li><span className="font-semibold">W, A, S, D:</span> Move</li>
-                <li><span className="font-semibold">Mouse Left/Right:</span> Look</li>
-                <li><span className="font-semibold">Click:</span> Lock Mouse</li>
+                <li><span className="font-semibold">Arrow Left/Right:</span> Look</li>
                 <li><span className="font-semibold">Enter:</span> Interact (when near object)</li>
-                <li><span className="font-semibold">Esc:</span> Unlock Mouse / Close Pop-up</li>
+                <li><span className="font-semibold">Esc:</span> Close Pop-up</li>
             </ul>
         </div>
     );
 };
 
-// Intro Screen Component
+// Intro Screen Component - Updated Start Logic
 interface IntroScreenProps {
     onStartGame: () => void;
 }
@@ -121,15 +118,12 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                 </CardHeader>
                 <CardContent className="p-6 space-y-4 text-center">
                     <p className="text-foreground">
-                        Explore the procedurally generated dungeon. Use your mouse to look left/right and W/A/S/D keys to move.
-                        Find mysterious objects and press Enter to inspect them. Click the screen or press Enter to begin.
+                        Explore the procedurally generated dungeon. Use W/A/S/D keys to move and Left/Right Arrow keys to look around.
+                        Find mysterious objects and press Enter to inspect them. Click the button or press Enter to begin.
                     </p>
                     <Button onClick={onStartGame} className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6">
                         Begin Exploration (or press Enter)
                     </Button>
-                     <p className="text-xs text-muted-foreground pt-2">
-                        Note: Pointer lock might not work in restricted environments (like some embedded previews). Try opening in a new tab if you have issues.
-                    </p>
                 </CardContent>
             </Card>
         </div>
@@ -141,111 +135,83 @@ const Game: React.FC = () => {
     const mountRef = useRef<HTMLDivElement>(null);
     const playerRef = useRef<THREE.Group>(new THREE.Group());
     const cameraRef = useRef<THREE.PerspectiveCamera>();
-    const controlsRef = useRef<PointerLockControls>();
+    // Removed controlsRef
     const sceneRef = useRef<THREE.Scene>();
     const rendererRef = useRef<THREE.WebGLRenderer>();
     const dungeonGroupRef = useRef<THREE.Group>(new THREE.Group());
     const interactableObjectsRef = useRef<InteractableObject[]>([]);
-    const torchesRef = useRef<TorchData[]>([]); // Store torch data for animation
+    const torchesRef = useRef<TorchData[]>([]);
     const keysPressedRef = useRef<{ [key: string]: boolean }>({});
     const [isPopupOpen, setIsPopupOpen] = useState(false);
     const [popupContent, setPopupContent] = useState('');
     const [nearbyObject, setNearbyObject] = useState<InteractableObject | null>(null);
-    const [isPointerLocked, setIsPointerLocked] = useState(false);
-    const [gameStarted, setGameStarted] = useState(false); // State for intro screen
+    // Removed isPointerLocked state
+    const [gameStarted, setGameStarted] = useState(false);
     const moveForward = useRef(false);
     const moveBackward = useRef(false);
-    const moveLeft = useRef(false);
-    const moveRight = useRef(false);
-    const velocity = useRef(new THREE.Vector3());
-    const direction = useRef(new THREE.Vector3());
+    const moveLeftStrafe = useRef(false); // Renamed for clarity
+    const moveRightStrafe = useRef(false); // Renamed for clarity
+    const rotateLeft = useRef(false);
+    const rotateRight = useRef(false);
+    const playerRotationY = useRef(0); // Store player rotation angle
+    // Removed velocity and direction refs as movement is calculated differently
     const { toast } = useToast();
-    const clock = useRef(new THREE.Clock()); // Use ref for clock
+    const clock = useRef(new THREE.Clock());
 
-    const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []); // Slightly more rooms/complexity
+    const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
-    // Interaction Logic - Triggered by Enter key press
+    // Interaction Logic - No longer depends on pointer lock
     const handleInteraction = useCallback(() => {
-        if (nearbyObject && isPointerLocked) { // Only interact if locked and near
+        if (nearbyObject) { // Only interact if near an object
             setPopupContent(nearbyObject.info);
             setIsPopupOpen(true);
-            controlsRef.current?.unlock(); // Unlock pointer when dialog opens
+            // No pointer unlock needed
         }
-    }, [nearbyObject, isPointerLocked]); // Depend on isPointerLocked
+    }, [nearbyObject]);
 
+    // Collision Detection (unchanged)
     const isPositionValid = useCallback((newPosition: THREE.Vector3): boolean => {
-        // Use player radius for collision check corners
         const corners = [
             new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS),
             new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS),
             new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS),
             new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS),
         ];
-
         for (const corner of corners) {
-             // Convert world position to grid coordinates, centering check within the tile
             const gridX = Math.floor(corner.x / TILE_SIZE + 0.5);
             const gridZ = Math.floor(corner.z / TILE_SIZE + 0.5);
-
-
-            if (
-                gridX < 0 || gridX >= DUNGEON_SIZE_WIDTH ||
-                gridZ < 0 || gridZ >= DUNGEON_SIZE_HEIGHT
-            ) {
-                return false; // Out of bounds
-            }
-
+            if (gridX < 0 || gridX >= DUNGEON_SIZE_WIDTH || gridZ < 0 || gridZ >= DUNGEON_SIZE_HEIGHT) return false;
             const tile = dungeonData[gridZ]?.[gridX];
-            if (tile === undefined || tile === DungeonTile.Wall) {
-                return false; // Hit a wall or undefined area
-            }
+            if (tile === undefined || tile === DungeonTile.Wall) return false;
         }
-        return true; // Position is valid
+        return true;
     }, [dungeonData]);
 
-     // Function to handle starting the game and locking pointer
-    const startGameAndLockPointer = useCallback(() => {
+    // Function to handle starting the game
+    const startGame = useCallback(() => {
         setGameStarted(true);
-         // Delay pointer lock slightly to ensure the canvas is active and intro screen unmounted
-        setTimeout(() => {
-             if (controlsRef.current && !controlsRef.current.isLocked) {
-                 try {
-                     // Check for Pointer Lock API support before attempting lock
-                     if ('pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document) {
-                          controlsRef.current.lock();
-                     } else {
-                         console.warn("Pointer Lock API not supported by this browser.");
-                         toast({
-                             title: "Pointer Lock Not Supported",
-                             description: "Your browser does not seem to support the Pointer Lock API required for mouse look.",
-                             variant: "destructive",
-                             duration: 5000,
-                         });
-                     }
-                 } catch (error) {
-                     console.warn("Attempted to lock pointer, but failed:", error);
-                     // Toast notification handled by the onPointerLockError handler
-                 }
-             }
-        }, 150); // Increased delay slightly
-    }, [toast]);
+        // No pointer lock attempt needed
+    }, []);
 
 
     // Initial Setup Effect
     useEffect(() => {
-        if (!mountRef.current || !gameStarted) return; // Only setup if game has started
+        if (!mountRef.current || !gameStarted) return;
 
         const currentMount = mountRef.current;
 
         // --- Scene Setup ---
         const scene = new THREE.Scene();
         sceneRef.current = scene;
-        scene.background = new THREE.Color(0x4a3026); // Deeper Sepia/Brown background
-        scene.fog = new THREE.Fog(0x4a3026, 3, 15); // Adjust fog
+        scene.background = new THREE.Color(0x4a3026);
+        scene.fog = new THREE.Fog(0x4a3026, 3, 15);
 
         // --- Camera Setup ---
-        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100); // Slightly narrower FOV
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
         cameraRef.current = camera;
+        camera.position.y = CAMERA_EYE_LEVEL; // Camera at eye level relative to player group
+        camera.lookAt(0, CAMERA_EYE_LEVEL, -1); // Look forward initially
+
 
         // --- Renderer Setup ---
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -254,59 +220,31 @@ const Game: React.FC = () => {
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.9; // Slightly brighter exposure
-
-        // Apply Sepia Filter Postprocessing
-        const sepiaShader: THREE.Shader = {
-            uniforms: {
-                "tDiffuse": { value: null },
-                "amount": { value: 0.8 } // Adjust sepia intensity (0 to 1)
-            },
-            vertexShader: `
-                varying vec2 vUv;
-                void main() {
-                    vUv = uv;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
-                }
-            `,
-            fragmentShader: `
-                uniform float amount;
-                uniform sampler2D tDiffuse;
-                varying vec2 vUv;
-                void main() {
-                    vec4 color = texture2D( tDiffuse, vUv );
-                    vec3 c = color.rgb;
-                    color.r = dot( c, vec3( 1.0 - 0.607 * amount, 0.769 * amount, 0.189 * amount ) );
-                    color.g = dot( c, vec3( 0.349 * amount, 1.0 - 0.314 * amount, 0.168 * amount ) );
-                    color.b = dot( c, vec3( 0.272 * amount, 0.534 * amount, 1.0 - 0.869 * amount ) );
-                    gl_FragColor = vec4( mix( color.rgb, c, 0.1 ), color.a ); // Mix slightly with original color for subtle effect
-                     // Clamp colors to avoid overly bright artifacts
-                    gl_FragColor.rgb = clamp(gl_FragColor.rgb, 0.0, 1.0);
-                }
-            `
-        };
-         // NOTE: ShaderPass and EffectComposer require importing from 'three/examples/jsm/postprocessing/...'
-         // Due to the current setup, this is omitted for simplicity, but would be needed for a true post-processing filter.
-         // Renderer background color and fog provide the primary sepia feel for now.
+        renderer.toneMappingExposure = 0.9;
 
         // --- Lighting Setup ---
-        const ambientLight = new THREE.AmbientLight(0x504030, 0.3); // Slightly stronger ambient sepia tint
+        const ambientLight = new THREE.AmbientLight(0x504030, 0.3);
         scene.add(ambientLight);
 
         // --- Player Setup ---
         const player = playerRef.current;
         player.position.y = 0; // Player group at floor level
-        camera.position.y = CAMERA_EYE_LEVEL; // Camera within player group at eye level
-        player.add(camera);
+        player.add(camera); // Add camera as child of player group
         scene.add(player);
 
-        // Find starting position (prefer non-corridor tiles)
+        // Add Player Glow Light
+        const playerGlowLight = new THREE.PointLight(PLAYER_GLOW_COLOR, PLAYER_GLOW_INTENSITY, PLAYER_GLOW_DISTANCE);
+        playerGlowLight.position.set(0, PLAYER_HEIGHT * 0.5, 0); // Position light source near player center
+        playerGlowLight.castShadow = false; // Player glow doesn't need to cast shadows
+        player.add(playerGlowLight); // Add light as child of player
+
+        // Find starting position (unchanged)
         let startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
         let startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
         let foundStart = false;
          outerLoop: for (let z = 1; z < dungeonData.length - 1; z++) {
             for (let x = 1; x < dungeonData[z].length - 1; x++) {
-                 if (dungeonData[z][x] === DungeonTile.Floor) { // Prioritize Floor over Corridor
+                 if (dungeonData[z][x] === DungeonTile.Floor) {
                      startX = x;
                      startZ = z;
                      foundStart = true;
@@ -317,7 +255,7 @@ const Game: React.FC = () => {
                  }
             }
         }
-         if (!foundStart && dungeonData[startZ]?.[startX] === DungeonTile.Wall) { // If center is wall, find *any* non-wall
+         if (!foundStart && dungeonData[startZ]?.[startX] === DungeonTile.Wall) {
               outerLoopFallback: for (let z = 1; z < dungeonData.length - 1; z++) {
                  for (let x = 1; x < dungeonData[z].length - 1; x++) {
                       if (dungeonData[z][x] !== DungeonTile.Wall) {
@@ -329,18 +267,18 @@ const Game: React.FC = () => {
               }
          }
         player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
+        playerRotationY.current = 0; // Start looking straight ahead (along negative Z initially)
 
-
-        // --- Dungeon Rendering ---
+        // --- Dungeon Rendering (includes torch placement) ---
         const wallGeometry = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
         const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x704214, roughness: 0.9, metalness: 0.1 });
         const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x967969, side: THREE.DoubleSide, roughness: 1.0 });
-        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x6a5a4a, side: THREE.DoubleSide, roughness: 1.0 }); // Darker ceiling
+        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x6a5a4a, side: THREE.DoubleSide, roughness: 1.0 });
 
         const dungeonGroup = dungeonGroupRef.current;
-        torchesRef.current = []; // Clear previous torches
+        torchesRef.current = [];
         interactableObjectsRef.current = [];
         dungeonData.forEach((row, z) => {
             row.forEach((tile, x) => {
@@ -354,21 +292,18 @@ const Game: React.FC = () => {
                     wall.castShadow = true;
                     dungeonGroup.add(wall);
                 } else if (tile === DungeonTile.Floor || tile === DungeonTile.Corridor) {
-                    // Floor
                     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
                     floor.position.set(tileCenterX, 0, tileCenterZ);
                     floor.rotation.x = -Math.PI / 2;
                     floor.receiveShadow = true;
                     dungeonGroup.add(floor);
 
-                    // Ceiling
                     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
                     ceiling.position.set(tileCenterX, WALL_HEIGHT, tileCenterZ);
                     ceiling.rotation.x = Math.PI / 2;
-                    ceiling.receiveShadow = true; // Ceilings receive shadows from torches
+                    ceiling.receiveShadow = true;
                     dungeonGroup.add(ceiling);
 
-                    // Add Torches
                      let isNearWall = false;
                      if (dungeonData[z + 1]?.[x] === DungeonTile.Wall ||
                          dungeonData[z - 1]?.[x] === DungeonTile.Wall ||
@@ -377,23 +312,20 @@ const Game: React.FC = () => {
                          isNearWall = true;
                      }
 
-                     if (isNearWall && tile !== DungeonTile.Corridor && Math.random() < TORCH_PROBABILITY) { // Place near walls, less in corridors
-                        const torchPosition = new THREE.Vector3(tileCenterX, 0, tileCenterZ); // Place at floor level
+                     if (isNearWall && tile !== DungeonTile.Corridor && Math.random() < TORCH_PROBABILITY) {
+                        const torchPosition = new THREE.Vector3(tileCenterX, 0, tileCenterZ);
                          const torchData = createTorch(torchPosition);
                          dungeonGroup.add(torchData.group);
-                         torchesRef.current.push(torchData); // Store for animation
+                         torchesRef.current.push(torchData);
                     }
 
-
-                    // Add placeholder objects randomly on floor tiles (reduced probability)
-                    if (tile === DungeonTile.Floor && Math.random() < 0.04) { // Even lower chance
-                        const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0); // Low poly
-                        const objectMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7, metalness: 0.1 }); // SaddleBrown
+                    if (tile === DungeonTile.Floor && Math.random() < 0.04) {
+                        const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0);
+                        const objectMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7, metalness: 0.1 });
                         const placeholderObject = new THREE.Mesh(objectGeometry, objectMaterial);
-                        placeholderObject.position.set(tileCenterX, 0.3, tileCenterZ); // Raise slightly off floor
+                        placeholderObject.position.set(tileCenterX, 0.3, tileCenterZ);
                         placeholderObject.castShadow = true;
                         placeholderObject.receiveShadow = true;
-                         // Add rotation for visual interest
                          placeholderObject.rotation.x = Math.random() * Math.PI;
                          placeholderObject.rotation.y = Math.random() * Math.PI;
                         dungeonGroup.add(placeholderObject);
@@ -408,64 +340,14 @@ const Game: React.FC = () => {
         });
         scene.add(dungeonGroup);
 
-        // --- Pointer Lock Controls ---
-        const controls = new PointerLockControls(camera, renderer.domElement);
-        controlsRef.current = controls;
-        controls.minPolarAngle = Math.PI / 2; // Lock vertical look - angle from top (0)
-        controls.maxPolarAngle = Math.PI / 2; // Lock vertical look - angle from bottom (PI)
 
-        const onPointerLockChange = () => {
-             const locked = controls.isLocked;
-            setIsPointerLocked(locked);
-             if (!locked) {
-                 // If unlocking and not because the popup opened, clear nearby object hint
-                 if (!isPopupOpen) {
-                     setNearbyObject(null);
-                 }
-             }
-        };
-        const onPointerLockError = (event: Event) => {
-            console.warn('PointerLockControls: Error locking pointer.', event);
-             setIsPointerLocked(false);
-             toast({
-                 title: "Pointer Lock Unavailable",
-                 description: "Cannot lock mouse pointer. This may be due to browser settings or running in a restricted environment (like some preview iframes). Try opening in a new tab.",
-                 variant: "destructive",
-                 duration: 7000, // Longer duration
-             });
-        };
-
-        controls.addEventListener('lock', onPointerLockChange);
-        controls.addEventListener('unlock', onPointerLockChange);
-        document.addEventListener('pointerlockerror', onPointerLockError, false);
-
-        // Click to lock pointer (only if game started and popup closed)
-        const lockPointer = () => {
-             if (gameStarted && !isPopupOpen && controlsRef.current && !controlsRef.current.isLocked) {
-                 try {
-                      if ('pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document) {
-                          controlsRef.current.lock();
-                      } else {
-                           console.warn("Pointer Lock API not supported by this browser.");
-                           toast({
-                               title: "Pointer Lock Not Supported",
-                               description: "Your browser does not seem to support the Pointer Lock API required for mouse look.",
-                               variant: "destructive",
-                               duration: 5000,
-                           });
-                      }
-                  } catch (error) {
-                      console.warn("Attempted to lock pointer, but failed:", error);
-                  }
-             }
-         };
-        currentMount.addEventListener('click', lockPointer);
-
+        // --- Remove Pointer Lock Controls ---
+        // No Pointer Lock setup needed
 
         // Mount renderer
         currentMount.appendChild(renderer.domElement);
 
-        // Handle window resize
+        // Handle window resize (unchanged)
         const handleResize = () => {
             if (cameraRef.current && rendererRef.current) {
                 cameraRef.current.aspect = window.innerWidth / window.innerHeight;
@@ -475,183 +357,162 @@ const Game: React.FC = () => {
         };
         window.addEventListener('resize', handleResize);
 
-        // Keyboard controls
+        // --- Keyboard controls - Updated ---
         const handleKeyDown = (event: KeyboardEvent) => {
-            keysPressedRef.current[event.key.toLowerCase()] = true;
-            switch (event.key.toLowerCase()) {
+            const key = event.key.toLowerCase();
+            keysPressedRef.current[key] = true;
+            switch (key) {
                 case 'w': moveForward.current = true; break;
                 case 's': moveBackward.current = true; break;
-                case 'a': moveLeft.current = true; break;
-                case 'd': moveRight.current = true; break;
+                case 'a': moveLeftStrafe.current = true; break; // Strafe left
+                case 'd': moveRightStrafe.current = true; break; // Strafe right
+                case 'arrowleft': rotateLeft.current = true; break;
+                case 'arrowright': rotateRight.current = true; break;
                 case 'enter':
                      if (isPopupOpen) {
-                         // Allow Enter to close the popup as well
                          setIsPopupOpen(false);
-                         // Attempt to re-lock pointer after closing with Enter
-                         setTimeout(() => lockPointer(), 100);
-                     } else if (isPointerLocked && nearbyObject) {
+                     } else if (nearbyObject) { // Interact if near an object
                          handleInteraction();
                      }
                     break;
                 case 'escape':
                     if (isPopupOpen) {
                         setIsPopupOpen(false);
-                         // Attempt to re-lock pointer after closing with Escape
-                         setTimeout(() => lockPointer(), 100);
-                    } else if (isPointerLocked) {
-                        controls.unlock();
                     }
+                    // No pointer unlock action needed
                     break;
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
-            keysPressedRef.current[event.key.toLowerCase()] = false;
-             switch (event.key.toLowerCase()) {
+            const key = event.key.toLowerCase();
+            keysPressedRef.current[key] = false;
+             switch (key) {
                 case 'w': moveForward.current = false; break;
                 case 's': moveBackward.current = false; break;
-                case 'a': moveLeft.current = false; break;
-                case 'd': moveRight.current = false; break;
+                case 'a': moveLeftStrafe.current = false; break;
+                case 'd': moveRightStrafe.current = false; break;
+                case 'arrowleft': rotateLeft.current = false; break;
+                case 'arrowright': rotateRight.current = false; break;
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
 
         // --- Animation Loop ---
-        // const clock = new THREE.Clock(); // Moved to useRef
-
         const animate = () => {
-             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current) {
-                 // Ensure cleanup doesn't cause errors if called after component unmounts/stops
+             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current) {
                  if (frameId) cancelAnimationFrame(frameId);
                  return;
              }
             const frameId = requestAnimationFrame(animate);
-
             const delta = clock.current.getDelta();
             const elapsedTime = clock.current.getElapsedTime();
 
-            // Animate Torches
+            // --- Animate Torches (unchanged) ---
             torchesRef.current.forEach(torchData => {
                 const { light, flame } = torchData;
-                // Flicker intensity
-                 const intensityNoise = (Math.sin(elapsedTime * FLICKER_SPEED + light.id * 0.7) + Math.cos(elapsedTime * FLICKER_SPEED * 0.6 + light.id)) * 0.5; // More complex noise
+                 const intensityNoise = (Math.sin(elapsedTime * FLICKER_SPEED + light.id * 0.7) + Math.cos(elapsedTime * FLICKER_SPEED * 0.6 + light.id)) * 0.5;
                 light.intensity = BASE_TORCH_LIGHT_INTENSITY + intensityNoise * FLICKER_INTENSITY_VARIATION;
-
-                // Flicker flame position slightly
                 const positionNoiseY = Math.sin(elapsedTime * FLICKER_SPEED * 1.2 + flame.id * 0.5) * FLICKER_POSITION_VARIATION;
-                flame.position.y = (1.0 + 0.1) + positionNoiseY; // Base position + flicker
-
-                // Optional: Flicker flame scale slightly for more visual effect
+                flame.position.y = (1.0 + 0.1) + positionNoiseY;
                  const scaleNoise = 1.0 + Math.cos(elapsedTime * FLICKER_SPEED * 0.8 + flame.id * 0.9) * 0.1;
                  flame.scale.setScalar(scaleNoise);
             });
 
+            // --- Player Rotation ---
+            let rotationChange = 0;
+            if (rotateLeft.current) rotationChange += ROTATION_SPEED * delta;
+            if (rotateRight.current) rotationChange -= ROTATION_SPEED * delta;
+            playerRotationY.current += rotationChange;
+            playerRef.current.rotation.y = playerRotationY.current; // Apply rotation to the player group
 
-            if (controlsRef.current?.isLocked === true) {
-                const player = playerRef.current;
-                const camera = cameraRef.current;
+            // --- Player Movement ---
+            const moveDirection = new THREE.Vector3();
+            const strafeDirection = new THREE.Vector3();
 
-                // Calculate movement direction based on camera (horizontal only)
-                direction.current.z = Number(moveForward.current) - Number(moveBackward.current);
-                direction.current.x = Number(moveRight.current) - Number(moveLeft.current);
-                direction.current.normalize(); // Ensure consistent speed diagonally
+            // Calculate forward/backward movement direction based on player's Y rotation
+            moveDirection.set(
+                 Math.sin(playerRotationY.current),
+                 0,
+                 Math.cos(playerRotationY.current)
+            ).normalize();
 
-                const cameraDirection = new THREE.Vector3();
-                camera.getWorldDirection(cameraDirection);
-                cameraDirection.y = 0; // Ignore vertical component for movement
-                cameraDirection.normalize();
-
-                // Calculate right vector based on camera (horizontal only)
-                 // Camera up is always (0, 1, 0) since we locked vertical rotation
-                const cameraRight = new THREE.Vector3();
-                cameraRight.crossVectors(new THREE.Vector3(0, 1, 0), cameraDirection).normalize();
-
-
-                // Combine inputs into a final move vector
-                const moveVector = new THREE.Vector3();
-                // Move forward/backward along the camera's facing direction (horizontal)
-                moveVector.addScaledVector(cameraDirection, direction.current.z);
-                 // Move left/right perpendicular to the camera's facing direction (horizontal)
-                moveVector.addScaledVector(cameraRight, direction.current.x);
-
-                 // Normalize the final move vector if needed (e.g., if mixing inputs directly)
-                 // In this case, direction is already normalized, so scaling is fine.
-                 // moveVector.normalize(); // Uncomment if combining non-normalized inputs
+            // Calculate left/right strafe direction (perpendicular to forward)
+            strafeDirection.set(
+                Math.sin(playerRotationY.current + Math.PI / 2), // 90 degrees offset
+                0,
+                Math.cos(playerRotationY.current + Math.PI / 2)
+           ).normalize();
 
 
+            const combinedMove = new THREE.Vector3();
+            if (moveForward.current) combinedMove.add(moveDirection);
+            if (moveBackward.current) combinedMove.sub(moveDirection);
+            if (moveLeftStrafe.current) combinedMove.add(strafeDirection); // Strafe left
+            if (moveRightStrafe.current) combinedMove.sub(strafeDirection); // Strafe right
+
+
+            if (combinedMove.lengthSq() > 0) { // Only move if there's input
+                combinedMove.normalize(); // Ensure consistent speed diagonally
                 const actualMoveSpeed = MOVE_SPEED * delta;
-                const moveAmount = moveVector.multiplyScalar(actualMoveSpeed);
+                const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
 
-                // Simple Collision Detection & Response
-                const currentPosition = player.position.clone();
+                const currentPosition = playerRef.current.position.clone();
                 const nextPosition = currentPosition.clone().add(moveAmount);
 
+                // --- Collision Detection & Response (Simplified - check full move first) ---
+                 if (isPositionValid(nextPosition)) {
+                    playerRef.current.position.copy(nextPosition);
+                 } else {
+                     // Try moving only on X axis relative to world
+                     const moveX = moveAmount.clone();
+                     moveX.z = 0;
+                     const nextPositionX = currentPosition.clone().add(moveX);
 
-                if (isPositionValid(nextPosition)) {
-                    player.position.copy(nextPosition);
-                } else {
-                    // Try moving only on X axis
-                    const moveX = moveAmount.clone();
-                    moveX.z = 0; // Isolate X movement
-                    const nextPositionX = currentPosition.clone().add(moveX);
+                     // Try moving only on Z axis relative to world
+                     const moveZ = moveAmount.clone();
+                     moveZ.x = 0;
+                     const nextPositionZ = currentPosition.clone().add(moveZ);
 
-                    // Try moving only on Z axis
-                    const moveZ = moveAmount.clone();
-                    moveZ.x = 0; // Isolate Z movement
-                    const nextPositionZ = currentPosition.clone().add(moveZ);
+                     let movedX = false;
+                     // Check X movement possibility (slide along Z wall)
+                     if (moveX.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
+                         playerRef.current.position.x = nextPositionX.x;
+                         movedX = true;
+                     }
 
-                    // Check X movement first
-                    if (moveX.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
-                         player.position.x = nextPositionX.x; // Allow X movement
-                         // Now check if Z movement is possible from the new X position
-                         const nextPositionZFromNewX = player.position.clone().add(moveZ);
-                         if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZFromNewX)) {
-                             player.position.z = nextPositionZFromNewX.z; // Allow Z too
-                         }
-                    }
-                    // Else (if X move wasn't valid or didn't happen), check Z movement from original spot
-                    else if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZ)) {
-                         player.position.z = nextPositionZ.z; // Allow Z movement
-                          // Now check if X movement is possible from the new Z position
-                         const nextPositionXFromNewZ = player.position.clone().add(moveX);
-                         if (moveX.lengthSq() > 0.0001 && isPositionValid(nextPositionXFromNewZ)) {
-                             player.position.x = nextPositionXFromNewZ.x; // Allow X too
-                         }
-                    }
-                }
-
-
-                // Check for nearby interactable objects
-                let closestObject: InteractableObject | null = null;
-                let minDistanceSq = INTERACTION_DISTANCE * INTERACTION_DISTANCE;
-
-                interactableObjectsRef.current.forEach(obj => {
-                    // Use player position for distance check
-                    const distanceSq = player.position.distanceToSquared(obj.mesh.position);
-                    if (distanceSq < minDistanceSq) {
-                        minDistanceSq = distanceSq;
-                        closestObject = obj;
-                    }
-                });
-
-                 // Update state only if the closest object changes
-                 if (closestObject?.id !== nearbyObject?.id) {
-                     setNearbyObject(closestObject);
-                 }
-
-            } else {
-                 // If pointer is not locked, ensure the hint is hidden
-                 if (nearbyObject !== null) {
-                     setNearbyObject(null);
+                     // Check Z movement possibility (slide along X wall)
+                     // Allow Z move even if X move was successful (allows sliding into corners)
+                     if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZ)) {
+                         playerRef.current.position.z = nextPositionZ.z;
+                     }
                  }
             }
+
+
+            // --- Check for nearby interactable objects ---
+            let closestObject: InteractableObject | null = null;
+            let minDistanceSq = INTERACTION_DISTANCE * INTERACTION_DISTANCE;
+            const playerPos = playerRef.current.position;
+
+            interactableObjectsRef.current.forEach(obj => {
+                const distanceSq = playerPos.distanceToSquared(obj.mesh.position);
+                if (distanceSq < minDistanceSq) {
+                    minDistanceSq = distanceSq;
+                    closestObject = obj;
+                }
+            });
+
+            // Update state only if the closest object changes OR if popup is open (to ensure hint disappears when moving away)
+            if (closestObject?.id !== nearbyObject?.id || (nearbyObject && !closestObject)) {
+                 setNearbyObject(closestObject);
+            }
+
 
             rendererRef.current.render(sceneRef.current, cameraRef.current);
         };
 
-        // Start animation loop
         let frameId = requestAnimationFrame(animate);
-
 
         // Cleanup
         return () => {
@@ -659,25 +520,21 @@ const Game: React.FC = () => {
             window.removeEventListener('resize', handleResize);
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);
-            currentMount.removeEventListener('click', lockPointer);
-            controlsRef.current?.removeEventListener('lock', onPointerLockChange);
-            controlsRef.current?.removeEventListener('unlock', onPointerLockChange);
-            document.removeEventListener('pointerlockerror', onPointerLockError, false);
-            controlsRef.current?.dispose();
-
+            // Remove pointer lock listeners
+            // currentMount.removeEventListener('click', lockPointer); // Removed
+            // controlsRef.current?.removeEventListener('lock', onPointerLockChange); // Removed
+            // controlsRef.current?.removeEventListener('unlock', onPointerLockChange); // Removed
+            // document.removeEventListener('pointerlockerror', onPointerLockError, false); // Removed
+            // controlsRef.current?.dispose(); // Removed
 
             if (currentMount && rendererRef.current) {
-                // Check if the renderer's DOM element is still a child before removing
                 if (currentMount.contains(rendererRef.current.domElement)) {
                      try {
                          currentMount.removeChild(rendererRef.current.domElement);
-                     } catch (e) {
-                         console.warn("Error removing renderer DOM element:", e);
-                     }
+                     } catch (e) { console.warn("Error removing renderer DOM element:", e); }
                 }
             }
             if (sceneRef.current) {
-                // Dispose geometries and materials
                 sceneRef.current.traverse((object) => {
                     if (object instanceof THREE.Mesh) {
                         object.geometry?.dispose();
@@ -687,105 +544,84 @@ const Game: React.FC = () => {
                             object.material.dispose();
                         }
                     } else if (object instanceof THREE.Light) {
-                         object.dispose(); // Dispose lights
+                         object.dispose();
                     }
                 });
-                  // Clear references to potentially large objects
                  torchesRef.current = [];
                  interactableObjectsRef.current = [];
-                 dungeonGroupRef.current.clear(); // Clear children of the dungeon group
+                 dungeonGroupRef.current.clear();
             }
-             rendererRef.current?.dispose(); // Dispose renderer resources
-             // Safely remove camera from player group if it exists
+             rendererRef.current?.dispose();
              if (cameraRef.current && playerRef.current?.children.includes(cameraRef.current)) {
                   playerRef.current.remove(cameraRef.current);
              }
+             if (playerRef.current?.children.find(c => c instanceof THREE.PointLight)) {
+                 const light = playerRef.current.children.find(c => c instanceof THREE.PointLight);
+                 if (light) playerRef.current.remove(light);
+             }
 
-              // Reset state variables
-             setIsPointerLocked(false);
              setNearbyObject(null);
              setIsPopupOpen(false);
-             clock.current.stop(); // Stop the clock
+             clock.current.stop();
 
-             // Clear refs to help GC
              sceneRef.current = undefined;
              rendererRef.current = undefined;
-             controlsRef.current = undefined;
+             // controlsRef.current = undefined; // Removed
              cameraRef.current = undefined;
-             playerRef.current = new THREE.Group(); // Re-initialize player ref
-             dungeonGroupRef.current = new THREE.Group(); // Re-initialize dungeon group ref
+             playerRef.current = new THREE.Group();
+             dungeonGroupRef.current = new THREE.Group();
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [gameStarted]); // Only re-run setup when gameStarted changes
+    }, [gameStarted, dungeonData, handleInteraction, isPositionValid]);
 
 
-    // Effect to handle pointer lock/unlock when popup state changes
-    useEffect(() => {
-        if (!gameStarted) return;
-
-        if (isPopupOpen) {
-            if (controlsRef.current?.isLocked) {
-                controlsRef.current.unlock();
-            }
-        }
-        // Attempt to re-lock is handled by click listener or Esc/Enter handlers now
-    }, [isPopupOpen, gameStarted]);
+    // No effect needed for popup/pointer lock interaction anymore
 
     if (!gameStarted) {
-        return <IntroScreen onStartGame={startGameAndLockPointer} />;
+        return <IntroScreen onStartGame={startGame} />;
     }
 
+    // Get player position for Minimap
+    const playerGridX = playerRef.current ? Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5) : 0;
+    const playerGridZ = playerRef.current ? Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5) : 0;
+
+
     return (
-        <div ref={mountRef} className="w-full h-full relative cursor-crosshair bg-black"> {/* Ensure mount div takes full space */}
-             <GameHUD /> {/* Always display HUD */}
+        <div ref={mountRef} className="w-full h-full relative bg-black"> {/* No cursor change */}
+             <GameHUD />
+             {/* Minimap Component */}
+             <Minimap
+                 dungeon={dungeonData}
+                 playerX={playerGridX}
+                 playerZ={playerGridZ}
+                 viewRadius={MINIMAP_VIEW_RADIUS}
+                 tileSize={TILE_SIZE}
+                 interactableObjects={interactableObjectsRef.current}
+             />
 
-             {/* Hint: Click to lock mouse (only when not locked and popup closed) */}
-             {!isPointerLocked && !isPopupOpen && gameStarted && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-white text-xl font-semibold pointer-events-none z-10">
-                    Click screen to lock mouse and look around
-                </div>
-            )}
-
-             {/* Hint: Press Enter to interact (only when locked and near object) */}
-            {isPointerLocked && nearbyObject && !isPopupOpen && (
+             {/* Hint: Press Enter to interact (shown when near object, popup closed) */}
+            {nearbyObject && !isPopupOpen && (
                 <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 p-3 bg-background/80 text-foreground rounded-md shadow-lg text-base border border-primary pointer-events-none z-10">
                     Press <span className="font-bold text-primary">[ Enter ]</span> to interact
                 </div>
             )}
 
-            {/* Crosshair (only when locked) */}
-            {isPointerLocked && (
-                 <div className="absolute top-1/2 left-1/2 w-1 h-1 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none bg-foreground/80 rounded-full z-10"></div>
-            )}
+            {/* Removed Crosshair and Click to lock hint */}
 
-             {/* Scroll Popup Dialog */}
+             {/* Scroll Popup Dialog (unchanged logic, but no re-locking pointer) */}
              <Dialog open={isPopupOpen} onOpenChange={(open) => {
                  setIsPopupOpen(open);
-                 // If closing the dialog, attempt to re-lock pointer after a short delay
-                 if (!open) {
-                     setTimeout(() => {
-                          if (gameStarted && controlsRef.current && !controlsRef.current.isLocked) {
-                                // Only try to lock if the game is still running and controls exist
-                                try {
-                                    if ('pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document) {
-                                        controlsRef.current.lock();
-                                    }
-                                } catch(e) { console.warn("Error re-locking pointer after dialog close:", e); }
-                            }
-                     }, 150);
-                 }
+                 // No attempt to re-lock pointer
              }}>
-                <DialogContent className="sm:max-w-[475px] bg-background text-foreground border-primary rounded-lg shadow-xl"> {/* Slightly wider */}
+                <DialogContent className="sm:max-w-[475px] bg-background text-foreground border-primary rounded-lg shadow-xl z-20"> {/* Ensure dialog is above minimap */}
                     <DialogHeader className="bg-primary p-4 rounded-t-lg">
                         <DialogTitle className="text-primary-foreground text-lg">Object Details</DialogTitle>
                          <DialogDescription className="text-primary-foreground/80 text-xs pt-1">
                            Press Esc or click Close to return.
                          </DialogDescription>
                     </DialogHeader>
-                     {/* Content uses ScrollArea */}
                      <div className="p-4">
                          <ScrollArea className="h-[250px] w-full rounded-md border border-input p-4 bg-secondary text-secondary-foreground">
-                             <p className="whitespace-pre-wrap">{popupContent}</p> {/* Allow line breaks */}
+                             <p className="whitespace-pre-wrap">{popupContent}</p>
                          </ScrollArea>
                      </div>
                     <div className="flex justify-end px-4 pb-4">
@@ -798,5 +634,3 @@ const Game: React.FC = () => {
 };
 
 export default Game;
-
-    
