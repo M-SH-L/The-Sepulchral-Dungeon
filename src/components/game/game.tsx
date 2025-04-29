@@ -246,8 +246,8 @@ const Game: React.FC = () => {
         const onPointerLockChange = () => {
             setIsPointerLocked(controls.isLocked);
         };
-        const onPointerLockError = () => {
-            console.error('PointerLockControls: Error locking pointer.');
+        const onPointerLockError = (event: Event) => {
+            console.error('PointerLockControls: Error locking pointer.', event);
             setIsPointerLocked(false);
         };
 
@@ -258,7 +258,13 @@ const Game: React.FC = () => {
         // Click to lock pointer
         const lockPointer = () => {
             if (!isPopupOpen) { // Only lock if popup is not open
-                 controls.lock();
+                try {
+                    controls.lock();
+                } catch (error) {
+                    console.error("Failed to lock pointer:", error);
+                    // Optionally inform the user that pointer lock failed
+                    alert("Could not lock pointer. This might be due to browser settings or sandboxing restrictions.");
+                }
             }
         };
          currentMount.addEventListener('click', lockPointer);
