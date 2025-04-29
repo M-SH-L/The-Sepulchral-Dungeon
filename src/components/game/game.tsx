@@ -270,8 +270,8 @@ const Game: React.FC = () => {
             setIsPointerLocked(false);
             // Inform user about the pointer lock issue via toast
              toast({
-                 title: "Pointer Lock Failed",
-                 description: "Could not lock pointer. Ensure the browser tab has focus and pointer lock is allowed. This might happen if running in a restricted iframe (like a sandbox).",
+                 title: "Pointer Lock Unavailable",
+                 description: "Cannot lock mouse pointer. This is often due to running in a sandboxed iframe (like a preview environment) without the 'allow-pointer-lock' permission. Try opening the app in a new tab.",
                  variant: "destructive", // Use destructive variant for errors
              });
         };
@@ -285,10 +285,20 @@ const Game: React.FC = () => {
         const lockPointer = () => {
             if (!isPopupOpen) { // Only lock if popup is not open
                  try {
-                     controls.lock();
+                     // Check if pointer lock is supported and possible
+                     if ('pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document) {
+                         controls.lock();
+                     } else {
+                          console.warn("Pointer Lock API not supported by this browser.");
+                          toast({
+                             title: "Pointer Lock Not Supported",
+                             description: "Your browser does not seem to support the Pointer Lock API required for mouse look.",
+                             variant: "destructive",
+                         });
+                     }
                  } catch (error) {
                      console.warn("Attempted to lock pointer, but failed:", error);
-                     // Toast notification handled by the onPointerLockError handler
+                     // Toast notification handled by the onPointerLockError handler, which provides more specific info
                  }
             }
         };
