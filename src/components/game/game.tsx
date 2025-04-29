@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -16,13 +17,14 @@ interface InteractableObject {
 
 // Constants
 const PLAYER_HEIGHT = 1.7;
-const PLAYER_RADIUS = 0.4; // Half the width/depth
+const PLAYER_RADIUS = 0.3; // Slightly smaller radius for tighter spaces
 const INTERACTION_DISTANCE = 1.5;
 const CAMERA_EYE_LEVEL = PLAYER_HEIGHT * 0.9; // Slightly below the top
 const MOVE_SPEED = 3.5; // Adjusted speed
 const DUNGEON_SIZE_WIDTH = 20;
 const DUNGEON_SIZE_HEIGHT = 20;
 const WALL_HEIGHT = 2.5;
+const TILE_SIZE = 1.0; // Assuming each grid cell is 1x1 unit
 
 const Game: React.FC = () => {
     const mountRef = useRef<HTMLDivElement>(null);
@@ -58,57 +60,44 @@ const Game: React.FC = () => {
         }
     }, [nearbyObject]);
 
-    // Collision Detection
+    // Collision Detection - Refined
     const isPositionValid = useCallback((newPosition: THREE.Vector3): boolean => {
-        const playerX = Math.floor(newPosition.x + 0.5); // Get grid cell
-        const playerZ = Math.floor(newPosition.z + 0.5);
+        // Player's potential bounding box corners in XZ plane
+        const corners = [
+            new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS), // Top-right
+            new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS), // Bottom-right
+            new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS), // Bottom-left
+            new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS), // Top-left
+        ];
 
-        // 1. Check Map Bounds
-        if (
-            playerX < 0 || playerX >= DUNGEON_SIZE_WIDTH ||
-            playerZ < 0 || playerZ >= DUNGEON_SIZE_HEIGHT
-        ) {
-            return false; // Out of bounds
+        for (const corner of corners) {
+            // Convert corner world coordinates to grid coordinates
+            const gridX = Math.floor(corner.x / TILE_SIZE + 0.5); // Center-based grid cell index
+            const gridZ = Math.floor(corner.z / TILE_SIZE + 0.5);
+
+            // Check Map Bounds
+            if (
+                gridX < 0 || gridX >= DUNGEON_SIZE_WIDTH ||
+                gridZ < 0 || gridZ >= DUNGEON_SIZE_HEIGHT
+            ) {
+                // console.log(`Collision: Out of bounds at (${gridX}, ${gridZ}) for position (${newPosition.x.toFixed(2)}, ${newPosition.z.toFixed(2)})`);
+                return false; // Out of bounds
+            }
+
+            // Check Tile Type
+            const tile = dungeonData[gridZ]?.[gridX];
+            if (tile === undefined || tile === DungeonTile.Wall) {
+                // console.log(`Collision: Wall at (${gridX}, ${gridZ}) for position (${newPosition.x.toFixed(2)}, ${newPosition.z.toFixed(2)})`);
+                return false; // Collision with wall
+            }
         }
 
-        // 2. Check Tile Type
-        const currentTile = dungeonData[playerZ]?.[playerX];
-        if (currentTile === undefined || currentTile === DungeonTile.Wall) {
-             // Allow slight overlap with wall edges but prevent deep penetration
-             // Check surrounding tiles for potential collisions near walls more precisely
-             for (let dz = -1; dz <= 1; dz++) {
-                 for (let dx = -1; dx <= 1; dx++) {
-                     const checkX = playerX + dx;
-                     const checkZ = playerZ + dz;
-
-                     if (
-                         checkX >= 0 && checkX < DUNGEON_SIZE_WIDTH &&
-                         checkZ >= 0 && checkZ < DUNGEON_SIZE_HEIGHT &&
-                         dungeonData[checkZ][checkX] === DungeonTile.Wall
-                     ) {
-                         const wallMin = new THREE.Vector3(checkX - 0.5, 0, checkZ - 0.5);
-                         const wallMax = new THREE.Vector3(checkX + 0.5, WALL_HEIGHT, checkZ + 0.5);
-                         const wallBox = new THREE.Box3(wallMin, wallMax);
-
-                         const playerSphere = new THREE.Sphere(newPosition, PLAYER_RADIUS);
-                         playerSphere.center.y = CAMERA_EYE_LEVEL; // Check collision at player height
-
-                         if (wallBox.intersectsSphere(playerSphere)) {
-                             return false; // Collision detected
-                         }
-                     }
-                 }
-             }
-             // If initial check failed but detailed check passed (maybe just grazing),
-             // it might still be a wall tile. Re-check primary tile.
-             if (currentTile === DungeonTile.Wall) return false;
-
-        }
-
-        // 3. (Optional) Check against specific object bounding boxes if needed
+        // Optional: Add collision checks with interactable objects if needed
+        // interactableObjectsRef.current.forEach(obj => { ... });
 
         return true; // Position is valid
     }, [dungeonData]);
+
 
     // Initial Setup Effect
     useEffect(() => {
@@ -125,7 +114,7 @@ const Game: React.FC = () => {
         // Camera setup
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         cameraRef.current = camera;
-        camera.position.y = CAMERA_EYE_LEVEL; // Set camera at eye level within the player group
+        // Camera position is set relative to the player group later
 
         // Renderer setup
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -145,36 +134,56 @@ const Game: React.FC = () => {
         directionalLight.shadow.camera.near = 0.5;
         directionalLight.shadow.camera.far = 50;
          // Adjust shadow camera frustum if needed
-         directionalLight.shadow.camera.left = -15;
-         directionalLight.shadow.camera.right = 15;
-         directionalLight.shadow.camera.top = 15;
-         directionalLight.shadow.camera.bottom = -15;
+         directionalLight.shadow.camera.left = -DUNGEON_SIZE_WIDTH / 2;
+         directionalLight.shadow.camera.right = DUNGEON_SIZE_WIDTH / 2;
+         directionalLight.shadow.camera.top = DUNGEON_SIZE_HEIGHT / 2;
+         directionalLight.shadow.camera.bottom = -DUNGEON_SIZE_HEIGHT / 2;
         scene.add(directionalLight);
          scene.add(directionalLight.target); // Target for directional light
 
         // Player setup (Group with Camera inside)
         const player = playerRef.current;
+        player.position.y = 0; // Player group pivot at floor level
+        camera.position.y = CAMERA_EYE_LEVEL; // Set camera at eye level within the player group
         player.add(camera); // Add camera to player group
         scene.add(player); // Add player group to scene
 
         // Find starting position for player
         let startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
         let startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
-        for (let y = 0; y < dungeonData.length; y++) {
-            const floorIndex = dungeonData[y].indexOf(DungeonTile.Floor);
-            if (floorIndex !== -1) {
-                startX = floorIndex;
-                startZ = y;
-                break;
+        let foundStart = false;
+        for (let z = 1; z < dungeonData.length - 1 && !foundStart; z++) { // Avoid edges
+            for (let x = 1; x < dungeonData[z].length - 1 && !foundStart; x++) {
+                if (dungeonData[z][x] === DungeonTile.Floor) {
+                    // Check neighbors to ensure it's not isolated if possible
+                    if (
+                        (dungeonData[z + 1]?.[x] !== DungeonTile.Wall) ||
+                        (dungeonData[z - 1]?.[x] !== DungeonTile.Wall) ||
+                        (dungeonData[z]?.[x + 1] !== DungeonTile.Wall) ||
+                        (dungeonData[z]?.[x - 1] !== DungeonTile.Wall)
+                    ) {
+                        startX = x;
+                        startZ = z;
+                        foundStart = true;
+                    }
+                }
             }
         }
-        player.position.set(startX, 0, startZ); // Place player group at start
+        // If no suitable floor found (highly unlikely), use fallback center (might be wall)
+         if (!foundStart) {
+             console.warn("No suitable starting floor tile found, using center fallback.");
+             startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
+             startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
+         }
+
+        // Position player group at center of the start tile
+        player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
 
 
         // Dungeon Rendering
-        const wallGeometry = new THREE.BoxGeometry(1, WALL_HEIGHT, 1);
-        const floorGeometry = new THREE.PlaneGeometry(1, 1);
-        const ceilingGeometry = new THREE.PlaneGeometry(1, 1); // Ceiling geometry
+        const wallGeometry = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
+        const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
+        const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE); // Ceiling geometry
         const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x704214, roughness: 0.9, metalness: 0.1 });
         const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x967969, side: THREE.DoubleSide, roughness: 1.0 });
         const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xae9a86, side: THREE.DoubleSide, roughness: 1.0 }); // Slightly lighter ceiling
@@ -183,28 +192,29 @@ const Game: React.FC = () => {
         interactableObjectsRef.current = []; // Clear previous objects
         dungeonData.forEach((row, z) => {
             row.forEach((tile, x) => {
-                const tileX = x;
-                const tileZ = z;
+                // Center position for the tile
+                const tileCenterX = x * TILE_SIZE;
+                const tileCenterZ = z * TILE_SIZE;
 
                 if (tile === DungeonTile.Wall) {
                     const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                    wall.position.set(tileX, WALL_HEIGHT / 2, tileZ); // Center wall cube vertically
+                    // Position wall cube centered on the tile, vertically centered
+                    wall.position.set(tileCenterX, WALL_HEIGHT / 2, tileCenterZ);
                     wall.receiveShadow = true;
                     wall.castShadow = true;
                     dungeonGroup.add(wall);
                 } else if (tile === DungeonTile.Floor || tile === DungeonTile.Corridor) {
                     // Floor
                     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-                    floor.position.set(tileX, 0, tileZ);
+                    floor.position.set(tileCenterX, 0, tileCenterZ); // At Y=0
                     floor.rotation.x = -Math.PI / 2;
                     floor.receiveShadow = true;
                     dungeonGroup.add(floor);
 
                     // Ceiling
                     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
-                    ceiling.position.set(tileX, WALL_HEIGHT, tileZ); // Position ceiling at wall height
+                    ceiling.position.set(tileCenterX, WALL_HEIGHT, tileCenterZ); // Position ceiling at wall height
                     ceiling.rotation.x = Math.PI / 2; // Rotate to face down
-                    // Ceilings typically don't cast shadows, but can receive them
                     ceiling.receiveShadow = true;
                     dungeonGroup.add(ceiling);
 
@@ -214,12 +224,12 @@ const Game: React.FC = () => {
                         const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0);
                         const objectMaterial = new THREE.MeshStandardMaterial({ color: 0x4A3026, roughness: 0.5 });
                         const placeholderObject = new THREE.Mesh(objectGeometry, objectMaterial);
-                        placeholderObject.position.set(tileX, 0.3, tileZ);
+                        placeholderObject.position.set(tileCenterX, 0.3, tileCenterZ);
                         placeholderObject.castShadow = true;
                         dungeonGroup.add(placeholderObject);
                         interactableObjectsRef.current.push({
                             mesh: placeholderObject,
-                            info: `You found a mysterious object at (${tileX}, ${tileZ}). It seems ancient and emanates a faint warmth. Perhaps it holds secrets of this dungeon... [Add more scrollable text here to test the functionality. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.]`,
+                            info: `You found a mysterious object at grid cell (${x}, ${z}). It seems ancient and emanates a faint warmth. Perhaps it holds secrets of this dungeon... [Add more scrollable text here to test the functionality. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.]`,
                             id: interactableObjectsRef.current.length,
                         });
                     }
@@ -231,7 +241,7 @@ const Game: React.FC = () => {
         // Pointer Lock Controls
         const controls = new PointerLockControls(camera, renderer.domElement);
         controlsRef.current = controls;
-        scene.add(controls.getObject()); // Add the controls object (which contains the camera)
+        // No need to add controls.getObject() to scene, camera is already in player group
 
         const onPointerLockChange = () => {
             setIsPointerLocked(controls.isLocked);
@@ -280,6 +290,11 @@ const Game: React.FC = () => {
                         handleInteraction();
                     }
                     break;
+                case 'escape': // Allow Esc to unlock pointer
+                    if (isPointerLocked) {
+                        controls.unlock();
+                    }
+                    break;
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
@@ -296,68 +311,93 @@ const Game: React.FC = () => {
 
         // Animation loop
         let prevTime = performance.now();
+        const clock = new THREE.Clock(); // Use Clock for delta
+
         const animate = () => {
             requestAnimationFrame(animate);
 
-            const time = performance.now();
-            const delta = (time - prevTime) / 1000; // Delta time in seconds
+            const delta = clock.getDelta(); // Delta time in seconds
 
             if (controlsRef.current?.isLocked === true) {
                 const player = playerRef.current;
+                const camera = cameraRef.current;
+                if (!camera) return; // Should not happen, but safety check
 
-                 // Reset velocity
-                 velocity.current.x -= velocity.current.x * 10.0 * delta;
-                 velocity.current.z -= velocity.current.z * 10.0 * delta;
+                 // Reset velocity (optional, depending on desired movement style)
+                 // velocity.current.x -= velocity.current.x * 10.0 * delta;
+                 // velocity.current.z -= velocity.current.z * 10.0 * delta;
 
-                // Calculate direction
+                // Calculate direction based on input
                 direction.current.z = Number(moveForward.current) - Number(moveBackward.current);
                 direction.current.x = Number(moveRight.current) - Number(moveLeft.current);
                 direction.current.normalize(); // Ensure consistent speed in all directions
 
-                 // Apply movement based on camera direction
-                 const moveX = direction.current.x * MOVE_SPEED * delta;
-                 const moveZ = direction.current.z * MOVE_SPEED * delta;
+                 // Get camera's forward and right vectors (in XZ plane)
+                 const cameraDirection = new THREE.Vector3();
+                 camera.getWorldDirection(cameraDirection);
+                 cameraDirection.y = 0; // Project onto XZ plane
+                 cameraDirection.normalize();
 
-                 const potentialMove = new THREE.Vector3();
-                 controlsRef.current.getDirection(potentialMove); // Get camera direction
-                 potentialMove.y = 0; // Ignore vertical component for movement
-                 potentialMove.normalize();
+                 const cameraRight = new THREE.Vector3();
+                 cameraRight.crossVectors(camera.up, cameraDirection).normalize();
 
-                 const rightVector = new THREE.Vector3();
-                 rightVector.crossVectors(camera.up, potentialMove).normalize(); // Get right vector
+                 // Calculate movement vector based on camera orientation and input
+                 const moveVector = new THREE.Vector3();
+                 moveVector.addScaledVector(cameraDirection, direction.current.z); // Forward/backward
+                 moveVector.addScaledVector(cameraRight, direction.current.x);      // Left/right
+                 moveVector.normalize(); // Normalize the combined movement vector
 
-                 const forwardMove = potentialMove.clone().multiplyScalar(-moveZ); // Forward/Backward
-                 const sidewaysMove = rightVector.multiplyScalar(-moveX); // Left/Right
-
-
-                 const finalMove = new THREE.Vector3();
-                 finalMove.add(forwardMove).add(sidewaysMove);
+                 const actualMoveSpeed = MOVE_SPEED * delta;
+                 const moveAmount = moveVector.multiplyScalar(actualMoveSpeed);
 
 
                  // --- Collision Detection before moving ---
                  const currentPosition = player.position.clone();
-                 const nextPosition = currentPosition.clone().add(finalMove);
+                 const nextPosition = currentPosition.clone().add(moveAmount);
 
-                if (isPositionValid(nextPosition)) {
-                     player.position.copy(nextPosition); // Apply movement if valid
+                 // Check collision for the full movement
+                 if (isPositionValid(nextPosition)) {
+                     player.position.copy(nextPosition); // Apply full movement if valid
                  } else {
-                     // Try moving along Z axis only
-                     const nextPositionZ = currentPosition.clone().add(forwardMove);
-                     if (isPositionValid(nextPositionZ)) {
-                         player.position.copy(nextPositionZ);
-                     } else {
-                         // Try moving along X axis only
-                         const nextPositionX = currentPosition.clone().add(sidewaysMove);
-                         if (isPositionValid(nextPositionX)) {
-                             player.position.copy(nextPositionX);
-                         }
-                         // If both fail, player doesn't move
+                     // If full movement invalid, try moving along X and Z separately (slide collision)
+                     const moveX = moveAmount.clone();
+                     moveX.z = 0; // Only X component
+                     const nextPositionX = currentPosition.clone().add(moveX);
+
+                     const moveZ = moveAmount.clone();
+                     moveZ.x = 0; // Only Z component
+                     const nextPositionZ = currentPosition.clone().add(moveZ);
+
+                     let moved = false;
+                     if (moveX.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
+                         player.position.copy(nextPositionX);
+                         moved = true;
                      }
+                     // Get the possibly updated position before checking Z
+                     const positionAfterXCheck = player.position.clone();
+                     const nextPositionZFromX = positionAfterXCheck.clone().add(moveZ);
+
+                     if (moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZFromX)) {
+                          // If X was already valid, add Z movement to it.
+                          // Otherwise, try Z from the original position.
+                         player.position.copy(nextPositionZFromX);
+                         moved = true;
+                      } else if (!moved && moveZ.lengthSq() > 0.0001 && isPositionValid(nextPositionZ)) {
+                         // Fallback: try moving only Z from original if X wasn't valid
+                          player.position.copy(nextPositionZ);
+                          moved = true;
+                      }
+
+                     // If neither X nor Z movement (or combined) is valid, the player doesn't move.
+                      if (!moved) {
+                         // console.log("Blocked");
+                      }
                  }
 
 
                  // Update directional light target to follow player
                  directionalLight.target.position.copy(player.position);
+                 directionalLight.target.updateMatrixWorld(); // Important after changing target position
 
 
                 // Check for nearby interactable objects
@@ -376,14 +416,13 @@ const Game: React.FC = () => {
                     setNearbyObject(closestObject); // Update state if the nearest object changes
                 }
             } else {
-                 // Reset velocity if pointer isn't locked
-                 velocity.current.set(0, 0, 0);
+                 // Reset velocity if pointer isn't locked (optional)
+                 // velocity.current.set(0, 0, 0);
                  setNearbyObject(null); // Clear nearby object when not locked
             }
 
 
             rendererRef.current?.render(sceneRef.current, cameraRef.current);
-            prevTime = time;
         };
 
         animate(); // Start animation loop
@@ -401,7 +440,10 @@ const Game: React.FC = () => {
 
 
             if (currentMount && rendererRef.current) {
-                currentMount.removeChild(rendererRef.current.domElement);
+                 // Check if renderer element is still a child before removing
+                if (currentMount.contains(rendererRef.current.domElement)) {
+                    currentMount.removeChild(rendererRef.current.domElement);
+                }
             }
             if (sceneRef.current) {
                 // Dispose geometries and materials
@@ -417,8 +459,11 @@ const Game: React.FC = () => {
                 });
             }
             rendererRef.current?.dispose();
-            playerRef.current.remove(cameraRef.current); // Remove camera before cleanup
-            setIsPointerLocked(false); // Ensure state is reset
+            if (cameraRef.current && playerRef.current.children.includes(cameraRef.current)) {
+                 playerRef.current.remove(cameraRef.current); // Remove camera before cleanup
+            }
+             setIsPointerLocked(false); // Ensure state is reset
+             clock.stop(); // Stop the clock
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [handleInteraction, isPositionValid, dungeonData]); // Add dependencies that don't change frequently
@@ -426,29 +471,25 @@ const Game: React.FC = () => {
      // Effect to handle popup closing and pointer locking
     useEffect(() => {
         if (!isPopupOpen && !isPointerLocked) {
-            // Attempt to re-lock pointer after closing the dialog if needed
-             // maybe add a small delay or rely on user click to re-lock
+            // Attempt to re-lock pointer after closing the dialog by clicking the screen again
         }
     }, [isPopupOpen, isPointerLocked]);
 
     return (
-        <div ref={mountRef} className="w-full h-full relative cursor-pointer">
+        <div ref={mountRef} className="w-full h-full relative cursor-crosshair"> {/* Changed cursor */}
              {!isPointerLocked && !isPopupOpen && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-xl pointer-events-none">
                     Click to Look Around
                 </div>
             )}
             {isPointerLocked && nearbyObject && (
-                <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 p-3 bg-background/80 text-foreground rounded-md shadow-lg text-base border border-primary">
+                <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 p-3 bg-background/80 text-foreground rounded-md shadow-lg text-base border border-primary pointer-events-none">
                     Press Enter to interact
                 </div>
             )}
              {/* Crosshair */}
             {isPointerLocked && (
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                    <div className="w-1 h-4 bg-foreground/70"></div>
-                    <div className="w-4 h-1 bg-foreground/70 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"></div>
-                </div>
+                 <div className="absolute top-1/2 left-1/2 w-1 h-1 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none bg-foreground/80 rounded-full"></div>
             )}
 
              <Dialog open={isPopupOpen} onOpenChange={setIsPopupOpen}>
@@ -456,11 +497,11 @@ const Game: React.FC = () => {
                     <DialogHeader className="bg-primary p-4 rounded-t-lg">
                         <DialogTitle className="text-primary-foreground text-lg">Object Information</DialogTitle>
                     </DialogHeader>
-                     <DialogDescription className="p-1"> {/* Reduced padding */}
+                     <DialogDescription asChild> {/* Use asChild to prevent nesting p tags */}
                             <ScrollArea className="h-[250px] w-full rounded-md border border-input p-4 bg-secondary text-secondary-foreground mt-2 mb-4">
-                                {popupContent}
+                                <p>{popupContent}</p> {/* Wrap content in a paragraph */}
                             </ScrollArea>
-                        </DialogDescription>
+                    </DialogDescription>
                     <div className="flex justify-end px-4 pb-4">
                         <Button onClick={() => setIsPopupOpen(false)} variant="outline" className="bg-primary text-primary-foreground hover:bg-primary/90">Close</Button>
                     </div>
@@ -471,4 +512,4 @@ const Game: React.FC = () => {
 };
 
 export default Game;
-```
+
