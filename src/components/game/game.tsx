@@ -271,7 +271,7 @@ const Game: React.FC = () => {
             // Inform user about the pointer lock issue via toast
              toast({
                  title: "Pointer Lock Failed",
-                 description: "Could not lock pointer. Ensure the browser tab has focus and pointer lock is allowed.",
+                 description: "Could not lock pointer. Ensure the browser tab has focus and pointer lock is allowed. This might happen if running in a restricted iframe (like a sandbox).",
                  variant: "destructive", // Use destructive variant for errors
              });
         };
@@ -341,7 +341,6 @@ const Game: React.FC = () => {
         window.addEventListener('keyup', handleKeyUp);
 
         // Animation loop
-        let prevTime = performance.now();
         const clock = new THREE.Clock(); // Use Clock for delta
 
         const animate = () => {
