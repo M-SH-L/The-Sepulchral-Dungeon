@@ -4,12 +4,17 @@ import { DungeonTile } from './dungeon-generator';
 import { cn } from '@/lib/utils';
 import type * as THREE from 'three';
 
-// Update interface to include size
+type OrbSize = 'small' | 'medium' | 'large';
+
 interface InteractableObjectData {
     mesh: THREE.Mesh;
     id: number;
-    size: 'small' | 'medium' | 'large'; // Add size property
-    // No 'used' property needed here, as filtering happens before passing
+    size: OrbSize; // Keep size property
+    // Add 'used' property back, as filtering might happen here or in Game component
+    // If filtering happens in Game, this isn't strictly needed here but good practice
+    used?: boolean; // Optional, depending on where filtering occurs
+    // Add 'visible' property if filtering based on visibility happens here
+    visible?: boolean; // Optional
 }
 
 interface MinimapProps {
@@ -18,7 +23,7 @@ interface MinimapProps {
     playerZ: number; // Player's grid Z coordinate
     viewRadius: number; // How many tiles to show around the player
     tileSize: number; // World scale tile size
-    interactableObjects: InteractableObjectData[]; // Now expects filtered list with size
+    interactableObjects: InteractableObjectData[]; // List might include used/hidden objects
     discoveredTiles: Set<string>; // Set of discovered tile keys ('x,z')
     getTileKey: (x: number, z: number) => string; // Function to generate tile keys
 }
@@ -29,72 +34,93 @@ const Minimap: React.FC<MinimapProps> = ({
     playerZ,
     viewRadius,
     tileSize,
-    interactableObjects, // Already filtered in Game component
+    interactableObjects, // Might contain used objects now
     discoveredTiles,
     getTileKey,
 }) => {
-    const mapSize = viewRadius * 2 + 1; // Diameter of the map view
-    // Initialize with 'U' for Undiscovered
-    const minimapGrid: (DungeonTile | 'P' | 'O' | 'U')[][] = Array.from({ length: mapSize }, () =>
+    const mapSize = viewRadius * 2 + 1;
+    // Represents the tile type or 'P' (Player), 'O' (Object), 'U' (Undiscovered)
+    // Added specific object sizes 'Os', 'Om', 'Ol'
+    type MinimapTileContent = DungeonTile | 'P' | 'Os' | 'Om' | 'Ol' | 'U';
+    const minimapGrid: MinimapTileContent[][] = Array.from({ length: mapSize }, () =>
         Array(mapSize).fill('U')
     );
 
-    // Populate the minimap grid based on discovered tiles and view radius
+    // Populate the minimap grid
     for (let y = 0; y < mapSize; y++) {
         for (let x = 0; x < mapSize; x++) {
             const worldX = playerX - viewRadius + x;
             const worldZ = playerZ - viewRadius + y;
             const tileKey = getTileKey(worldX, worldZ);
 
-            // Only process tiles that have been discovered
             if (discoveredTiles.has(tileKey)) {
-                 // Check bounds of the main dungeon
-                 if (worldZ >= 0 && worldZ < dungeon.length && worldX >= 0 && worldX < dungeon[0].length) {
-                    minimapGrid[y][x] = dungeon[worldZ][worldX]; // Assign the actual tile type
+                if (worldZ >= 0 && worldZ < dungeon.length && worldX >= 0 && worldX < dungeon[0].length) {
+                    const baseTile = dungeon[worldZ][worldX];
+                    minimapGrid[y][x] = baseTile; // Assign the base tile type first
 
-                    // Check for interactable objects in this *discovered* world tile
-                    // Use the already filtered interactableObjects list
+                    // Check for *visible and unused* interactable objects in this tile
                     const objectsInTile = interactableObjects.filter(obj => {
-                         const objGridX = Math.floor(obj.mesh.position.x / tileSize + 0.5);
-                         const objGridZ = Math.floor(obj.mesh.position.z / tileSize + 0.5);
-                         return objGridX === worldX && objGridZ === worldZ;
+                        // Ensure object is not used and its mesh is visible
+                        // (Visibility check might be redundant if filtered in Game, but safe to keep)
+                        if (obj.used || !obj.mesh.visible) return false;
+
+                        const objGridX = Math.floor(obj.mesh.position.x / tileSize + 0.5);
+                        const objGridZ = Math.floor(obj.mesh.position.z / tileSize + 0.5);
+                        return objGridX === worldX && objGridZ === worldZ;
                     });
 
-                    // Mark tile if an object is present, but only if it's discovered and not the player's tile
+                    // Mark tile based on the largest object found (if any)
                     if (objectsInTile.length > 0 && !(y === viewRadius && x === viewRadius)) {
-                         minimapGrid[y][x] = 'O'; // Mark as Object
+                        // Find the largest orb size in this tile
+                        let largestSize: OrbSize | null = null;
+                        objectsInTile.forEach(obj => {
+                            if (!largestSize || obj.size === 'large' || (obj.size === 'medium' && largestSize === 'small')) {
+                                largestSize = obj.size;
+                            }
+                        });
+
+                        if (largestSize === 'large') minimapGrid[y][x] = 'Ol';
+                        else if (largestSize === 'medium') minimapGrid[y][x] = 'Om';
+                        else minimapGrid[y][x] = 'Os'; // Default to small if only small or null
                     }
                 } else {
-                    minimapGrid[y][x] = DungeonTile.Wall; // Treat out-of-bounds discovered as wall
+                    minimapGrid[y][x] = DungeonTile.Wall; // Out-of-bounds discovered is wall
                 }
             } else {
-                 minimapGrid[y][x] = 'U'; // Keep as Undiscovered
+                minimapGrid[y][x] = 'U'; // Undiscovered
             }
         }
     }
 
-    // Place the player marker at the center, overriding any object/tile marker
-    minimapGrid[viewRadius][viewRadius] = 'P'; // Mark as Player
+    // Place the player marker, overriding others
+    minimapGrid[viewRadius][viewRadius] = 'P';
 
-
-    // Determine the Tailwind class for each tile
-    const getTileClass = (tile: DungeonTile | 'P' | 'O' | 'U'): string => {
+    // Determine the Tailwind class for each tile type
+    const getTileClass = (tile: MinimapTileContent): string => {
         switch (tile) {
-            case DungeonTile.Floor:
-                return 'bg-secondary/60 hover:bg-secondary/80'; // Discovered floor
-            case DungeonTile.Corridor:
-                return 'bg-muted/60 hover:bg-muted/80'; // Discovered corridor
-            case DungeonTile.Wall:
-                return 'bg-primary/70 hover:bg-primary/90'; // Discovered wall
-            case 'P':
-                return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30 animate-pulse'; // Player marker (added pulse)
-            case 'O':
-                return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Object marker (light source, added pulse)
-            case 'U':
-                 return 'bg-black/50'; // Undiscovered tile (dark gray/semi-transparent black)
-            default:
-                return 'bg-black'; // Unknown
+            case DungeonTile.Floor: return 'bg-secondary/60 hover:bg-secondary/80';
+            case DungeonTile.Corridor: return 'bg-muted/60 hover:bg-muted/80';
+            case DungeonTile.Wall: return 'bg-primary/70 hover:bg-primary/90';
+            case 'P': return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30 animate-pulse';
+            case 'Os': return 'bg-yellow-300 border border-yellow-500 shadow-inner shadow-black/30 animate-pulse'; // Small Orb
+            case 'Om': return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Medium Orb
+            case 'Ol': return 'bg-yellow-500 border border-yellow-700 shadow-inner shadow-black/30 animate-pulse'; // Large Orb
+            case 'U': return 'bg-black/50'; // Undiscovered
+            default: return 'bg-black';
         }
+    };
+
+    const getTileTitle = (tile: MinimapTileContent, x: number, y: number): string => {
+         const worldX = playerX - viewRadius + x;
+         const worldZ = playerZ - viewRadius + y;
+         switch (tile) {
+             case 'P': return `Player at (${playerX}, ${playerZ})`;
+             case 'Os': return `Small Light Source at (${worldX}, ${worldZ})`;
+             case 'Om': return `Medium Light Source at (${worldX}, ${worldZ})`;
+             case 'Ol': return `Large Light Source at (${worldX}, ${worldZ})`;
+             case 'U': return 'Undiscovered';
+             default: return `Tile: ${tile} at (${worldX}, ${worldZ})`;
+         }
     };
 
     return (
@@ -114,12 +140,7 @@ const Minimap: React.FC<MinimapProps> = ({
                             'w-[10px] h-[10px] rounded-sm transition-colors duration-150',
                             getTileClass(tile)
                         )}
-                        title={
-                             tile === 'U' ? 'Undiscovered' :
-                             tile === 'P' ? `Player at (${playerX}, ${playerZ})` :
-                             tile === 'O' ? `Light Source at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})` :
-                             `Tile: ${tile} at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})`
-                         }
+                        title={getTileTitle(tile, x, y)}
                     />
                 ))
             )}
