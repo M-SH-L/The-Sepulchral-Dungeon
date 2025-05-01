@@ -7,6 +7,7 @@ import type * as THREE from 'three';
 interface InteractableObjectData {
     mesh: THREE.Mesh;
     id: number;
+    // No 'used' property needed here, as filtering happens before passing
 }
 
 interface MinimapProps {
@@ -15,7 +16,7 @@ interface MinimapProps {
     playerZ: number; // Player's grid Z coordinate
     viewRadius: number; // How many tiles to show around the player
     tileSize: number; // World scale tile size
-    interactableObjects: InteractableObjectData[];
+    interactableObjects: InteractableObjectData[]; // Now expects filtered list
     discoveredTiles: Set<string>; // Set of discovered tile keys ('x,z')
     getTileKey: (x: number, z: number) => string; // Function to generate tile keys
 }
@@ -26,7 +27,7 @@ const Minimap: React.FC<MinimapProps> = ({
     playerZ,
     viewRadius,
     tileSize,
-    interactableObjects,
+    interactableObjects, // Already filtered in Game component
     discoveredTiles,
     getTileKey,
 }) => {
@@ -50,6 +51,7 @@ const Minimap: React.FC<MinimapProps> = ({
                     minimapGrid[y][x] = dungeon[worldZ][worldX]; // Assign the actual tile type
 
                     // Check for interactable objects in this *discovered* world tile
+                    // Use the already filtered interactableObjects list
                     const objectsInTile = interactableObjects.filter(obj => {
                          const objGridX = Math.floor(obj.mesh.position.x / tileSize + 0.5);
                          const objGridZ = Math.floor(obj.mesh.position.z / tileSize + 0.5);
@@ -58,7 +60,7 @@ const Minimap: React.FC<MinimapProps> = ({
 
                     // Mark tile if an object is present, but only if it's discovered and not the player's tile
                     if (objectsInTile.length > 0 && !(y === viewRadius && x === viewRadius)) {
-                         minimapGrid[y][x] = 'O';
+                         minimapGrid[y][x] = 'O'; // Mark as Object
                     }
                 } else {
                     minimapGrid[y][x] = DungeonTile.Wall; // Treat out-of-bounds discovered as wall
@@ -73,7 +75,7 @@ const Minimap: React.FC<MinimapProps> = ({
     // Ensure the player's tile itself is marked (even if technically undiscovered by radius logic)
     const playerTileKey = getTileKey(playerX, playerZ);
     if (discoveredTiles.has(playerTileKey) || true) { // Always show player
-        minimapGrid[viewRadius][viewRadius] = 'P';
+        minimapGrid[viewRadius][viewRadius] = 'P'; // Mark as Player
     }
 
 
@@ -87,9 +89,9 @@ const Minimap: React.FC<MinimapProps> = ({
             case DungeonTile.Wall:
                 return 'bg-primary/70 hover:bg-primary/90'; // Discovered wall
             case 'P':
-                return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30'; // Player marker
+                return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30 animate-pulse'; // Player marker (added pulse)
             case 'O':
-                return 'bg-yellow-500 border border-yellow-700 shadow-inner shadow-black/30'; // Object marker
+                return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Object marker (light source, added pulse)
             case 'U':
                  return 'bg-black/50'; // Undiscovered tile (dark gray/semi-transparent black)
             default:
@@ -111,10 +113,15 @@ const Minimap: React.FC<MinimapProps> = ({
                     <div
                         key={`${x}-${y}`}
                         className={cn(
-                            'w-[10px] h-[10px] rounded-sm transition-colors duration-150', // Added transition
+                            'w-[10px] h-[10px] rounded-sm transition-colors duration-150',
                             getTileClass(tile)
                         )}
-                        title={tile === 'U' ? 'Undiscovered' : `Tile: ${tile} at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})`}
+                        title={
+                             tile === 'U' ? 'Undiscovered' :
+                             tile === 'P' ? `Player at (${playerX}, ${playerZ})` :
+                             tile === 'O' ? `Light Source at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})` :
+                             `Tile: ${tile} at (${playerX - viewRadius + x}, ${playerZ - viewRadius + y})`
+                         }
                     />
                 ))
             )}
@@ -123,3 +130,4 @@ const Minimap: React.FC<MinimapProps> = ({
 };
 
 export default Minimap;
+
