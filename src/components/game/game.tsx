@@ -3,27 +3,35 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
-// Dialog related imports are removed as popup is no longer used
-// import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-// import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress'; // Import Progress bar
+import { Progress } from '@/components/ui/progress';
 import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
 import Minimap from './minimap';
-import { Geist_Mono } from 'next/font/google'; // Import Geist Mono
+import { Geist_Mono } from 'next/font/google';
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
   subsets: ['latin'],
 });
 
+// Define light orb sizes and their properties
+type OrbSize = 'small' | 'medium' | 'large';
+const ORB_SIZES: Record<OrbSize, { scale: number; lightValue: number; probability: number; color: number; emissiveIntensity: number }> = {
+    small:  { scale: 0.18, lightValue: 15, probability: 0.60, color: 0xFFFFE0, emissiveIntensity: 0.6 }, // More frequent, less light
+    medium: { scale: 0.28, lightValue: 35, probability: 0.30, color: 0xFFF0C0, emissiveIntensity: 0.9 }, // Less frequent, more light
+    large:  { scale: 0.40, lightValue: 60, probability: 0.10, color: 0xFFE0A0, emissiveIntensity: 1.3 }, // Rare, most light
+};
+const CUMULATIVE_ORB_PROBABILITY = Object.values(ORB_SIZES).reduce((sum, size) => sum + size.probability, 0); // Should be 1.0
+
 interface InteractableObject {
     mesh: THREE.Mesh;
     info: string; // Keep info for potential future use or debugging
     id: number;
     used: boolean; // Track if the object has been used
+    size: OrbSize;
+    lightValue: number; // How much light this orb gives
 }
 
 interface TorchData {
@@ -35,7 +43,7 @@ interface TorchData {
 // Constants
 const PLAYER_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.3;
-const INTERACTION_DISTANCE = 1.5;
+const COLLECTION_DISTANCE = 1.0; // Reduced distance for automatic collection
 const CAMERA_EYE_LEVEL = PLAYER_HEIGHT * 0.9;
 const MOVE_SPEED = 3.5;
 const ROTATION_SPEED = Math.PI * 0.6; // Radians per second for turning
@@ -44,27 +52,26 @@ const DUNGEON_SIZE_HEIGHT = 30;
 const WALL_HEIGHT = 2.5;
 const TILE_SIZE = 1.0;
 const ROOM_TORCH_PROBABILITY = 0.04;
-const CORRIDOR_TORCH_PROBABILITY = 0.12; // Further increased torch probability in corridors
-const OBJECT_PROBABILITY = 0.05; // Slightly increased object probability
+const CORRIDOR_TORCH_PROBABILITY = 0.12;
+const OBJECT_PROBABILITY = 0.05; // Probability of *any* object spawning
 const OBJECT_HEIGHT = PLAYER_HEIGHT * 0.7; // Keep objects at eye level
-const BASE_TORCH_LIGHT_INTENSITY = 1.8; // Slightly brighter base
-const TORCH_LIGHT_DISTANCE = 6.0; // Increased range
-const TORCH_LIGHT_COLOR = 0xffa54a; // Warm orange
-const TORCH_WALL_OFFSET = 0.05; // How much the light source is embedded into the wall
-const TORCH_HEIGHT_OFFSET = 1.5; // Height of the light source on the wall
-const FLICKER_SPEED = 4.0; // Slower flicker
-const FLICKER_INTENSITY_VARIATION = 0.6; // More intensity variation
-// Flicker position variation is removed
+const BASE_TORCH_LIGHT_INTENSITY = 1.8;
+const TORCH_LIGHT_DISTANCE = 6.0;
+const TORCH_LIGHT_COLOR = 0xffa54a;
+const TORCH_WALL_OFFSET = 0.05;
+const TORCH_HEIGHT_OFFSET = 1.5;
+const FLICKER_SPEED = 4.0;
+const FLICKER_INTENSITY_VARIATION = 0.6;
 const PLAYER_GLOW_COLOR = 0xffffff;
-const MIN_PLAYER_GLOW_INTENSITY = 0.5; // Minimum light when duration is low
-const MAX_PLAYER_GLOW_INTENSITY = 2.5; // Max intensity at full duration
-const MIN_PLAYER_GLOW_DISTANCE = 2.0;  // Minimum range
-const MAX_PLAYER_GLOW_DISTANCE = 6.0;  // Maximum range at full duration
+const MIN_PLAYER_GLOW_INTENSITY = 0.5;
+const MAX_PLAYER_GLOW_INTENSITY = 2.5;
+const MIN_PLAYER_GLOW_DISTANCE = 2.0;
+const MAX_PLAYER_GLOW_DISTANCE = 6.0;
 const MINIMAP_VIEW_RADIUS = 5;
-const PLAYER_DISCOVERY_RADIUS = 1; // How many tiles around the player are revealed on move
-const INITIAL_LIGHT_DURATION = 60; // Starting seconds of light
-const LIGHT_REPLENISH_AMOUNT = 30; // Seconds added per object interaction
-const MAX_LIGHT_DURATION = 120; // Maximum seconds of light player can hold
+const PLAYER_DISCOVERY_RADIUS = 1;
+const INITIAL_LIGHT_DURATION = 60; // Starting light amount (like seconds, but decreases with movement)
+const MAX_LIGHT_DURATION = 120; // Max light amount player can hold
+const LIGHT_DECAY_PER_UNIT_MOVED = 2.5; // Amount of light duration lost per unit distance moved
 
 // Function to create a torch light source embedded in the wall - Unchanged
 const createTorch = (position: THREE.Vector3): TorchData => {
@@ -81,7 +88,7 @@ const createTorch = (position: THREE.Vector3): TorchData => {
     return { group: torchGroup, light: pointLight };
 };
 
-// HUD Component - Updated to show Light Duration
+// HUD Component - Updated to remove Enter instruction
 interface GameHUDProps {
     lightDuration: number;
     maxLightDuration: number;
@@ -95,12 +102,12 @@ const GameHUD: React.FC<GameHUDProps> = ({ lightDuration, maxLightDuration }) =>
             <ul className="list-none space-y-1 text-xs mb-3">
                 <li><span className="font-semibold">[ W, A, S, D ]:</span> Move</li>
                 <li><span className="font-semibold">[ Arrow ← / → ]:</span> Look</li>
-                <li><span className="font-semibold">[ Enter ]:</span> Collect Light (near artifact)</li>
-                {/* Removed Esc instruction as popup is gone */}
+                {/* Removed Enter instruction */}
             </ul>
              <h3 className="font-bold mb-1 text-base border-b border-primary/50 pb-1">Light Remaining</h3>
              <Progress value={lightPercentage} className="w-full h-3 mt-2 bg-secondary border border-input" />
-             <p className="text-xs text-center mt-1">{Math.ceil(lightDuration)}s / {maxLightDuration}s</p>
+             {/* Simplified light display */}
+             <p className="text-xs text-center mt-1">{Math.ceil(lightPercentage)}%</p>
         </div>
     );
 };
@@ -137,7 +144,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                 </CardHeader>
                 <CardContent className="p-8 space-y-6 text-center">
                     <p className="text-foreground/90 leading-relaxed">
-                        Descend into the dust-choked labyrinth. Your light fades... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and glance left/right with <span className="font-semibold text-primary-foreground/80">[Arrow Keys]</span>. Collect light from strange artifacts <span className="font-semibold text-primary-foreground/80">[Enter]</span> to stave off the encroaching darkness.
+                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and glance left/right with <span className="font-semibold text-primary-foreground/80">[Arrow Keys]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness.
                     </p>
                     <Button
                         onClick={onStartGame}
@@ -149,6 +156,19 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
             </Card>
         </div>
     );
+};
+
+// Helper function to get a random orb size based on probabilities
+const getRandomOrbSize = (): OrbSize => {
+    let rand = Math.random() * CUMULATIVE_ORB_PROBABILITY; // Use total probability for normalization
+    let cumulative = 0;
+    for (const size in ORB_SIZES) {
+        cumulative += ORB_SIZES[size as OrbSize].probability;
+        if (rand <= cumulative) {
+            return size as OrbSize;
+        }
+    }
+    return 'small'; // Fallback, should ideally not happen if probabilities sum to 1+
 };
 
 
@@ -163,10 +183,7 @@ const Game: React.FC = () => {
     const interactableObjectsRef = useRef<InteractableObject[]>([]);
     const torchesRef = useRef<TorchData[]>([]);
     const keysPressedRef = useRef<{ [key: string]: boolean }>({});
-    // Removed popup state
-    // const [isPopupOpen, setIsPopupOpen] = useState(false);
-    // const [popupContent, setPopupContent] = useState('');
-    const nearbyObjectRef = useRef<InteractableObject | null>(null); // Use ref for nearby object check
+    const nearbyObjectRef = useRef<InteractableObject | null>(null); // Use ref for nearby object check for collection logic
     const [gameStarted, setGameStarted] = useState(false);
     const moveForward = useRef(false);
     const moveBackward = useRef(false);
@@ -179,7 +196,9 @@ const Game: React.FC = () => {
     const clock = useRef(new THREE.Clock());
     const cleanupFunctions = useRef<(() => void)[]>([]);
     const [discoveredTiles, setDiscoveredTiles] = useState<Set<string>>(new Set());
-    const [lightDuration, setLightDuration] = useState(INITIAL_LIGHT_DURATION); // Light timer state
+    const [lightDuration, setLightDuration] = useState(INITIAL_LIGHT_DURATION); // Light amount state
+    const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3()); // Track position for light decay
+
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
@@ -199,35 +218,46 @@ const Game: React.FC = () => {
                      }
                 }
             }
-             newDiscovered.add(getTileKey(playerGridX, playerGridZ));
+             newDiscovered.add(getTileKey(playerGridX, playerGridZ)); // Ensure current tile is discovered
             return newDiscovered;
         });
-    }, []); // Removed dungeonData dependency as it's stable
+    }, []); // Stable dependency
 
-    // Interaction Logic - Modified for Light Collection
-    const handleInteraction = useCallback(() => {
-        const nearbyObject = nearbyObjectRef.current; // Get from ref
-        if (nearbyObject && !nearbyObject.used) {
-            // Increase light duration
-            setLightDuration(currentDuration => Math.min(MAX_LIGHT_DURATION, currentDuration + LIGHT_REPLENISH_AMOUNT));
+    // Automatic Light Collection Logic - Replaces handleInteraction
+    const collectNearbyLight = useCallback(() => {
+        const playerPos = playerRef.current.position;
+        let collected = false;
 
-            // Mark object as used
-            nearbyObject.used = true;
-             // Optional: Make the object visually disappear or change appearance
-             nearbyObject.mesh.visible = false; // Simple way to remove it
+        interactableObjectsRef.current.forEach(obj => {
+            if (!obj.used && obj.mesh.visible) {
+                const distanceSq = playerPos.distanceToSquared(obj.mesh.position);
+                 if (distanceSq < COLLECTION_DISTANCE * COLLECTION_DISTANCE) {
+                     // Increase light duration
+                     setLightDuration(currentDuration => Math.min(MAX_LIGHT_DURATION, currentDuration + obj.lightValue));
 
-             // Provide feedback
-            toast({
-                 title: "Light Collected!",
-                 description: `Your light duration increased by ${LIGHT_REPLENISH_AMOUNT}s.`,
-                 variant: "default", // Or a custom success variant
-                 duration: 3000, // Show toast for 3 seconds
-            });
+                     // Mark object as used and hide it
+                     obj.used = true;
+                     obj.mesh.visible = false;
+                     collected = true;
 
-            // Clear the nearby object ref as it's used
-            nearbyObjectRef.current = null;
+                     // Provide feedback
+                     toast({
+                         title: `${obj.size.charAt(0).toUpperCase() + obj.size.slice(1)} Light Collected!`,
+                         description: `Light replenished.`,
+                         variant: "default",
+                         duration: 2000, // Shorter duration for automatic collection
+                     });
+                 }
+            }
+        });
+
+        // Update the nearby object ref (though less critical now without explicit interaction hint)
+        if (!collected) {
+            nearbyObjectRef.current = null; // Clear if no object was collected in range
         }
+
     }, [toast]); // Added toast dependency
+
 
     // Collision Detection - Unchanged
     const isPositionValid = useCallback((newPosition: THREE.Vector3): boolean => {
@@ -250,6 +280,9 @@ const Game: React.FC = () => {
     // Start Game Function - Unchanged
     const startGame = useCallback(() => {
         setGameStarted(true);
+        if (playerRef.current) {
+            lastPlayerPosition.current.copy(playerRef.current.position); // Initialize last position on start
+        }
     }, []);
 
      // Check for adjacent walls (helper function) - Unchanged
@@ -297,8 +330,8 @@ const Game: React.FC = () => {
         // Scene Setup
         const scene = new THREE.Scene();
         sceneRef.current = scene;
-        scene.background = new THREE.Color(0x2a1a10); // Darker sepia background
-        scene.fog = new THREE.Fog(0x2a1a10, 1, 10); // Adjusted fog, starts closer, less dense overall
+        scene.background = new THREE.Color(0x2a1a10);
+        scene.fog = new THREE.Fog(0x2a1a10, 1, 10);
 
         // Camera Setup
         const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -313,10 +346,10 @@ const Game: React.FC = () => {
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.7; // Even slightly darker exposure for atmosphere
+        renderer.toneMappingExposure = 0.7;
 
         // Lighting Setup
-        const ambientLight = new THREE.AmbientLight(0x403020, 0.15); // Even dimmer sepia ambient
+        const ambientLight = new THREE.AmbientLight(0x403020, 0.15);
         scene.add(ambientLight);
 
         // Player Setup
@@ -325,12 +358,12 @@ const Game: React.FC = () => {
         player.add(camera);
         scene.add(player);
 
-        // Player Glow Light (initialized here, intensity/distance updated in animate)
+        // Player Glow Light
         const playerGlowLight = new THREE.PointLight(PLAYER_GLOW_COLOR, MAX_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_DISTANCE);
         playerGlowLight.position.set(0, PLAYER_HEIGHT * 0.5, 0);
-        playerGlowLight.castShadow = false; // Player glow doesn't cast shadows
+        playerGlowLight.castShadow = false;
         player.add(playerGlowLight);
-        playerGlowLightRef.current = playerGlowLight; // Store ref
+        playerGlowLightRef.current = playerGlowLight;
 
         // Find starting position and initialize discovered tiles - Unchanged logic
          let startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
@@ -355,8 +388,9 @@ const Game: React.FC = () => {
                }
           }
          player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
+         lastPlayerPosition.current.copy(player.position); // Initialize last position
          playerRotationY.current = 0;
-         updateDiscovery(startX, startZ);
+         updateDiscovery(startX, startZ); // Discover starting area
 
 
         // Dungeon Rendering (Torches and Objects)
@@ -406,29 +440,33 @@ const Game: React.FC = () => {
                          }
                      }
 
-                    // Place interactable objects (Light Sources)
+                    // Place interactable light objects (orbs)
                     if (tile === DungeonTile.Floor && Math.random() < OBJECT_PROBABILITY) {
-                        const objectGeometry = new THREE.IcosahedronGeometry(0.3, 0); // Keep artifact shape
+                        const orbSize = getRandomOrbSize();
+                        const sizeProps = ORB_SIZES[orbSize];
+
+                        const objectGeometry = new THREE.IcosahedronGeometry(sizeProps.scale, 0);
                          const objectMaterial = new THREE.MeshStandardMaterial({
-                             color: 0xFFFFE0, // Light yellow / white color for light source
-                             emissive: 0xFFFFE0, // Make it glow
-                             emissiveIntensity: 0.8,
+                             color: sizeProps.color,
+                             emissive: sizeProps.color,
+                             emissiveIntensity: sizeProps.emissiveIntensity,
                              roughness: 0.3,
                              metalness: 0.1
                          });
                         const lightSourceMesh = new THREE.Mesh(objectGeometry, objectMaterial);
-                        lightSourceMesh.position.set(tileCenterX, OBJECT_HEIGHT, tileCenterZ); // Eye level
-                        lightSourceMesh.castShadow = false; // Light sources don't cast shadows
+                        lightSourceMesh.position.set(tileCenterX, OBJECT_HEIGHT, tileCenterZ);
+                        lightSourceMesh.castShadow = false;
                         lightSourceMesh.receiveShadow = false;
                         lightSourceMesh.rotation.x = Math.random() * Math.PI;
                         lightSourceMesh.rotation.y = Math.random() * Math.PI;
                         dungeonGroup.add(lightSourceMesh);
                         interactableObjectsRef.current.push({
                             mesh: lightSourceMesh,
-                            // Info string is less important now, but kept for structure
-                            info: `A floating source of light at (${x}, ${z}). Collect it to replenish your dwindling light.`,
+                            info: `A ${orbSize} source of light.`,
                             id: interactableObjectsRef.current.length,
-                            used: false // Initialize as unused
+                            used: false,
+                            size: orbSize,
+                            lightValue: sizeProps.lightValue,
                         });
                     }
                 }
@@ -449,7 +487,7 @@ const Game: React.FC = () => {
         window.addEventListener('resize', handleResize);
         cleanupFunctions.current.push(() => window.removeEventListener('resize', handleResize));
 
-        // Keyboard controls - Updated Enter/Escape logic
+        // Keyboard controls - Removed Enter/Escape logic for interaction
         const handleKeyDown = (event: KeyboardEvent) => {
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
@@ -460,14 +498,8 @@ const Game: React.FC = () => {
                 case 'd': moveRightStrafe.current = true; break;
                 case 'arrowleft': rotateLeft.current = true; break;
                 case 'arrowright': rotateRight.current = true; break;
-                case 'enter':
-                    // No popup check needed, just call interaction directly
-                    handleInteraction();
-                    break;
-                case 'escape':
-                    // Escape no longer closes a popup
-                    // Could potentially be used for a pause menu in the future
-                    break;
+                // Enter key no longer does anything for interaction
+                // Escape key could be used for pausing later
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
@@ -498,13 +530,19 @@ const Game: React.FC = () => {
             const delta = clock.current.getDelta();
             const elapsedTime = clock.current.getElapsedTime();
 
-             // Decrease light duration
-             setLightDuration(prevDuration => Math.max(0, prevDuration - delta));
+            // --- Light Decay Logic ---
+            const currentPosition = playerRef.current.position;
+            const distanceMoved = lastPlayerPosition.current.distanceTo(currentPosition);
+
+            if (distanceMoved > 0.01) { // Only decay if moved significantly
+                setLightDuration(prevDuration => Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED));
+                lastPlayerPosition.current.copy(currentPosition); // Update last position
+            }
+            // --- End Light Decay Logic ---
 
              // Update Player Glow based on remaining light duration
              if (playerGlowLightRef.current) {
                  const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
-                 // Interpolate intensity and distance based on the ratio
                  playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
                  playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
              }
@@ -536,8 +574,13 @@ const Game: React.FC = () => {
             // Player Movement (Forward/Backward/Strafe) - Unchanged logic
             const moveDirection = new THREE.Vector3();
             const strafeDirection = new THREE.Vector3();
-            moveDirection.setFromMatrixColumn(playerRef.current.matrix, 2).negate().setY(0).normalize();
-            strafeDirection.setFromMatrixColumn(playerRef.current.matrix, 0).setY(0).normalize();
+            // Get forward direction (local Z axis, negated because cameras look down -Z)
+            playerRef.current.getWorldDirection(moveDirection).negate();
+            moveDirection.y = 0; // Ignore vertical component for movement
+            moveDirection.normalize();
+            // Get strafe direction (local X axis)
+            strafeDirection.crossVectors(playerRef.current.up, moveDirection).negate(); // Right vector
+
 
             const combinedMove = new THREE.Vector3();
             if (moveForward.current) combinedMove.add(moveDirection);
@@ -545,7 +588,7 @@ const Game: React.FC = () => {
             if (moveLeftStrafe.current) combinedMove.sub(strafeDirection);
             if (moveRightStrafe.current) combinedMove.add(strafeDirection);
 
-             let movedThisFrame = false;
+            let movedThisFrame = false;
 
             if (combinedMove.lengthSq() > 0) {
                 combinedMove.normalize();
@@ -558,10 +601,11 @@ const Game: React.FC = () => {
                     playerRef.current.position.copy(nextPosition);
                     movedThisFrame = true;
                  } else {
+                     // Slide along walls
                      const moveXComponent = new THREE.Vector3(moveAmount.x, 0, 0);
                      const nextPositionX = currentPosition.clone().add(moveXComponent);
                      const moveZComponent = new THREE.Vector3(0, 0, moveAmount.z);
-                     const nextPositionZ = currentPosition.clone().add(moveZComponent); // Use original Z for checking Z movement
+                     const nextPositionZ = currentPosition.clone().add(moveZComponent);
 
                      let movedX = false;
                      if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
@@ -570,8 +614,7 @@ const Game: React.FC = () => {
                          movedX = true;
                      }
 
-                     // Use the *potentially updated* current position for Z check if X moved
-                     const currentPosForZCheck = playerRef.current.position.clone();
+                     const currentPosForZCheck = playerRef.current.position.clone(); // Position might have changed if X moved
                      const nextPositionZAfterX = currentPosForZCheck.clone().add(moveZComponent);
 
                      if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
@@ -586,25 +629,24 @@ const Game: React.FC = () => {
                  const playerGridX = Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5);
                  const playerGridZ = Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5);
                  updateDiscovery(playerGridX, playerGridZ);
+                 // Attempt to collect light after moving
+                 collectNearbyLight();
             }
 
-            // Check for nearby interactable objects - Update ref instead of state
-            let closestObject: InteractableObject | null = null;
-            let minDistanceSq = INTERACTION_DISTANCE * INTERACTION_DISTANCE;
-            const playerPos = playerRef.current.position;
-             interactableObjectsRef.current.forEach(obj => {
-                  // Only consider objects that are visible and not used
-                 if (obj.mesh.visible && !obj.used) {
-                     const distanceSq = playerPos.distanceToSquared(obj.mesh.position);
-                     if (distanceSq < minDistanceSq) {
-                         minDistanceSq = distanceSq;
-                         closestObject = obj;
-                     }
-                 }
-             });
-
-             // Update the ref directly
-             nearbyObjectRef.current = closestObject;
+            // Check for nearby interactable objects (less critical now, but keeps ref updated)
+             let closestObject: InteractableObject | null = null;
+             let minDistanceSq = COLLECTION_DISTANCE * COLLECTION_DISTANCE; // Check within collection distance
+             const playerPos = playerRef.current.position;
+              interactableObjectsRef.current.forEach(obj => {
+                   if (obj.mesh.visible && !obj.used) {
+                       const distanceSq = playerPos.distanceToSquared(obj.mesh.position);
+                       if (distanceSq < minDistanceSq) {
+                           minDistanceSq = distanceSq;
+                           closestObject = obj;
+                       }
+                   }
+              });
+              nearbyObjectRef.current = closestObject;
 
 
             rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -637,7 +679,10 @@ const Game: React.FC = () => {
              sceneRef.current = undefined;
              rendererRef.current = undefined;
              cameraRef.current = undefined;
+             // Reset playerRef to a new group to avoid potential state issues on remount
              playerRef.current = new THREE.Group();
+             // Ensure lastPlayerPosition is also reset or re-initialized if needed
+             lastPlayerPosition.current.set(0,0,0); // Reset last position tracker
              dungeonGroupRef.current = new THREE.Group();
              torchesRef.current = [];
              interactableObjectsRef.current = [];
@@ -649,12 +694,11 @@ const Game: React.FC = () => {
              rotateLeft.current = false;
              rotateRight.current = false;
              nearbyObjectRef.current = null; // Reset ref
-             // setIsPopupOpen(false); // Remove popup state reset
              setDiscoveredTiles(new Set());
              setLightDuration(INITIAL_LIGHT_DURATION); // Reset light duration
         };
-    // Dependencies: gameStarted, dungeonData, isPositionValid, handleInteraction, updateDiscovery, toast
-    }, [gameStarted, dungeonData, isPositionValid, handleInteraction, updateDiscovery, toast]);
+    // Dependencies: gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast
+    }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast]);
 
 
     if (!gameStarted) {
@@ -663,7 +707,6 @@ const Game: React.FC = () => {
 
     const playerGridX = playerRef.current ? Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5) : 0;
     const playerGridZ = playerRef.current ? Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5) : 0;
-    const currentNearbyObject = nearbyObjectRef.current; // Get current value from ref for rendering hint
 
     return (
         <div ref={mountRef} className="w-full h-full relative bg-black">
@@ -679,15 +722,7 @@ const Game: React.FC = () => {
                  discoveredTiles={discoveredTiles}
                  getTileKey={getTileKey}
              />
-
-             {/* Hint: Press Enter to interact (Updated text) */}
-            {currentNearbyObject && ( // Check the ref's current value
-                <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 p-3 bg-background/80 text-foreground rounded-md shadow-lg text-base border border-primary pointer-events-none z-10">
-                    Press <span className="font-bold text-primary">[ Enter ]</span> to collect light
-                </div>
-            )}
-
-             {/* Removed Dialog component */}
+             {/* Removed interaction hint */}
         </div>
     );
 };

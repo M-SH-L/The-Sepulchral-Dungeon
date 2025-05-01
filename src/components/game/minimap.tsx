@@ -4,9 +4,11 @@ import { DungeonTile } from './dungeon-generator';
 import { cn } from '@/lib/utils';
 import type * as THREE from 'three';
 
+// Update interface to include size
 interface InteractableObjectData {
     mesh: THREE.Mesh;
     id: number;
+    size: 'small' | 'medium' | 'large'; // Add size property
     // No 'used' property needed here, as filtering happens before passing
 }
 
@@ -16,7 +18,7 @@ interface MinimapProps {
     playerZ: number; // Player's grid Z coordinate
     viewRadius: number; // How many tiles to show around the player
     tileSize: number; // World scale tile size
-    interactableObjects: InteractableObjectData[]; // Now expects filtered list
+    interactableObjects: InteractableObjectData[]; // Now expects filtered list with size
     discoveredTiles: Set<string>; // Set of discovered tile keys ('x,z')
     getTileKey: (x: number, z: number) => string; // Function to generate tile keys
 }
@@ -72,11 +74,7 @@ const Minimap: React.FC<MinimapProps> = ({
     }
 
     // Place the player marker at the center, overriding any object/tile marker
-    // Ensure the player's tile itself is marked (even if technically undiscovered by radius logic)
-    const playerTileKey = getTileKey(playerX, playerZ);
-    if (discoveredTiles.has(playerTileKey) || true) { // Always show player
-        minimapGrid[viewRadius][viewRadius] = 'P'; // Mark as Player
-    }
+    minimapGrid[viewRadius][viewRadius] = 'P'; // Mark as Player
 
 
     // Determine the Tailwind class for each tile
@@ -130,4 +128,3 @@ const Minimap: React.FC<MinimapProps> = ({
 };
 
 export default Minimap;
-
