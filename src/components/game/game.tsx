@@ -562,7 +562,7 @@ const Game: React.FC = () => {
                 case 's': moveBackward.current = false; break;
                 case 'a': moveLeftStrafe.current = true; break;
                 case 'd': moveRightStrafe.current = true; break;
-                case 'arrowleft': rotateLeft.current = false; break;
+                case 'arrowleft': rotateLeft.current = true; break;
                 case 'arrowright': rotateRight.current = false; break;
             }
         };
@@ -806,10 +806,6 @@ const Game: React.FC = () => {
     }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast]); // Dependencies
 
 
-    if (!gameStarted) {
-        return <IntroScreen onStartGame={startGame} />;
-    }
-
     const playerGridX = playerRef.current ? Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5) : 0;
     const playerGridZ = playerRef.current ? Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5) : 0;
 
@@ -835,4 +831,3 @@ const Game: React.FC = () => {
 };
 
 export default Game;
-
