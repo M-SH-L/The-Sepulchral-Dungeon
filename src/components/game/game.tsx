@@ -727,10 +727,9 @@ const Game: React.FC = () => {
             const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
             if (playerGlowLightRef.current) {
                 if (lightDuration > 0 && !isGameOver) { // Light only on if duration > 0 and not game over
-                    // Use an easing function for more dramatic light falloff
-                    const easedLightRatio = lightRatio * lightRatio; // Quadratic ease-out
-                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, easedLightRatio);
-                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, easedLightRatio);
+                    // Use linear interpolation for light spread
+                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
+                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
                 } else {
                     // PITCH BLACK or Game Over: Ensure the light is completely off
                     playerGlowLightRef.current.intensity = ZERO_LIGHT_INTENSITY;
@@ -742,8 +741,8 @@ const Game: React.FC = () => {
                 const fogColor = new THREE.Color(); // Temporary color object
                 if (lightDuration > 0 && !isGameOver) {
                     fog.near = NORMAL_FOG_NEAR;
-                    const easedRatio = lightRatio * lightRatio; // Example: quadratic easing (faster fade near zero)
-                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, easedRatio);
+                    // Use linear ratio for fog distance as well
+                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, lightRatio);
                     fogColor.setHex(NORMAL_FOG_COLOR);
                 } else {
                     // PITCH BLACK or Game Over: Make fog extremely close and black
@@ -800,6 +799,7 @@ const Game: React.FC = () => {
                  playerVelocity.current.z = 0;
 
                  // Calculate movement based on keys pressed (W/S)
+                 // Swap add and sub for W/S to fix inversion
                  if (moveForward.current) playerVelocity.current.add(moveDirection);
                  if (moveBackward.current) playerVelocity.current.sub(moveDirection);
 
@@ -984,5 +984,3 @@ const Game: React.FC = () => {
 // Helper function lockPointer removed
 
 export default Game;
-
-    
