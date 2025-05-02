@@ -10,8 +10,7 @@ import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
 import Minimap from './minimap';
 import { Geist_Mono } from 'next/font/google';
-import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'; // Import PointerLockControls
-
+// PointerLockControls import removed
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
@@ -44,7 +43,7 @@ const PLAYER_RADIUS = 0.3;
 const COLLECTION_DISTANCE = 1.5; // Increased distance for automatic collection
 const CAMERA_EYE_LEVEL = PLAYER_HEIGHT * 0.9; // Place camera near the top of the player height
 const MOVE_SPEED = 3.5;
-// Removed ROTATION_SPEED as mouse controls handle rotation
+const ROTATION_SPEED = Math.PI / 1.5; // Rotation speed in radians per second
 const DUNGEON_SIZE_WIDTH = 30;
 const DUNGEON_SIZE_HEIGHT = 30;
 const WALL_HEIGHT = 2.5;
@@ -54,9 +53,9 @@ const OBJECT_HEIGHT_OFFSET = -0.2; // Place orbs slightly below center line of w
 
 const PLAYER_GLOW_COLOR = 0xffffff;
 const MIN_PLAYER_GLOW_INTENSITY = 0; // Intensity should be zero when light is out
-const MAX_PLAYER_GLOW_INTENSITY = 4.0; // Increased max intensity
+const MAX_PLAYER_GLOW_INTENSITY = 5.0; // Increased max intensity further
 const MIN_PLAYER_GLOW_DISTANCE = 0; // Distance should be zero when light is out
-const MAX_PLAYER_GLOW_DISTANCE = 25.0; // Significantly increased max distance for wider light spread
+const MAX_PLAYER_GLOW_DISTANCE = 30.0; // Significantly increased max distance further
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
@@ -73,7 +72,7 @@ const ZERO_LIGHT_FOG_COLOR = 0x000000; // Pure black fog when light is out
 // --- Normal Light State Constants ---
 const NORMAL_FOG_NEAR = 1;
 const NORMAL_FOG_FAR = MAX_PLAYER_GLOW_DISTANCE * 0.8; // Tie normal fog to max glow distance
-const NORMAL_FOG_COLOR = 0x100500; // Dark sepia/brown fog color
+const NORMAL_FOG_COLOR = 0x000000; // Changed fog to black for complete darkness
 
 
 // HUD Component
@@ -88,8 +87,10 @@ const GameHUD: React.FC<GameHUDProps> = ({ lightDuration, maxLightDuration }) =>
         <div className="absolute top-4 left-4 p-4 bg-background/80 text-foreground rounded-md shadow-lg text-sm border border-primary pointer-events-none z-10 w-64">
             <h3 className="font-bold mb-2 text-base border-b border-primary/50 pb-1">Controls</h3>
             <ul className="list-none space-y-1 text-xs mb-3">
-                <li><span className="font-semibold">[ W, A, S, D ]:</span> Move</li>
-                <li><span className="font-semibold">[ Mouse ]:</span> Look</li> {/* Updated control */}
+                <li><span className="font-semibold">[ W ]:</span> Move Forward</li>
+                <li><span className="font-semibold">[ S ]:</span> Move Backward</li>
+                <li><span className="font-semibold">[ ← ]:</span> Look Left</li>
+                <li><span className="font-semibold">[ → ]:</span> Look Right</li>
             </ul>
              <h3 className="font-bold mb-1 text-base border-b border-primary/50 pb-1">Light Remaining</h3>
              <Progress value={lightPercentage} className="w-full h-3 mt-2 bg-secondary border border-input" />
@@ -133,7 +134,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                 </CardHeader>
                 <CardContent className="p-8 space-y-6 text-center">
                     <p className="text-foreground/90 leading-relaxed">
-                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and look around with the <span className="font-semibold text-primary-foreground/80">[Mouse]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness. Run out of light, and the darkness takes you. Click to begin.
+                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/S]</span> to move and <span className="font-semibold text-primary-foreground/80">[←/→ Arrows]</span> to look around. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness. Run out of light, and the darkness takes you. Click or press Enter to begin.
                     </p>
                     <Button
                         onClick={onStartGame}
@@ -170,7 +171,7 @@ const Game: React.FC = () => {
     const cameraRef = useRef<THREE.PerspectiveCamera>();
     const sceneRef = useRef<THREE.Scene>();
     const rendererRef = useRef<THREE.WebGLRenderer>();
-    const controlsRef = useRef<PointerLockControls | null>(null); // Ref for PointerLockControls
+    // controlsRef removed
     const playerGlowLightRef = useRef<THREE.PointLight>();
     const dungeonGroupRef = useRef<THREE.Group>(new THREE.Group());
     const interactableObjectsRef = useRef<InteractableObject[]>([]);
@@ -178,10 +179,8 @@ const Game: React.FC = () => {
     const [gameStarted, setGameStarted] = useState(false);
     const moveForward = useRef(false);
     const moveBackward = useRef(false);
-    const moveLeft = useRef(false); // Changed from strafe
-    const moveRight = useRef(false); // Changed from strafe
-    // Removed rotateLeft and rotateRight refs
-    // Removed playerRotationY ref
+    const rotateLeft = useRef(false); // Added for arrow key rotation
+    const rotateRight = useRef(false); // Added for arrow key rotation
     const { toast } = useToast();
     const clock = useRef(new THREE.Clock());
     const cleanupFunctions = useRef<(() => void)[]>([]);
@@ -190,7 +189,7 @@ const Game: React.FC = () => {
     const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3());
     const animationFrameId = useRef<number | null>(null); // Use ref for animation frame ID
     const [isGameOver, setIsGameOver] = useState(false); // Game over state
-    const [isPaused, setIsPaused] = useState(false); // Pause state for pointer lock
+    // isPaused state removed
 
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
@@ -238,6 +237,16 @@ const Game: React.FC = () => {
                      obj.used = true;
                      obj.mesh.visible = false;
 
+                     // Remove the object's mesh from the scene (or dungeon group)
+                     if (dungeonGroupRef.current) {
+                         dungeonGroupRef.current.remove(obj.mesh);
+                         // Optionally dispose of geometry/material if needed and not cached heavily
+                         // obj.mesh.geometry.dispose();
+                         // if (obj.mesh.material instanceof THREE.Material) {
+                         //     obj.mesh.material.dispose();
+                         // }
+                     }
+
                      // Provide feedback
                      toast({
                          title: `${obj.size.charAt(0).toUpperCase() + obj.size.slice(1)} Light Collected!`,
@@ -280,14 +289,11 @@ const Game: React.FC = () => {
         // Stop movement refs
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeft.current = false;
-        moveRight.current = false;
-        // Removed rotate refs
+        rotateLeft.current = false; // Stop rotation
+        rotateRight.current = false; // Stop rotation
         keysPressedRef.current = {}; // Clear all keys
 
-        // Unlock pointer lock on game over
-        controlsRef.current?.unlock();
-        setIsPaused(true); // Update pause state
+        // No pointer lock to unlock
 
         toast({
             title: "Consumed by Darkness",
@@ -302,7 +308,7 @@ const Game: React.FC = () => {
                 window.removeEventListener('keydown', handleRestart);
                 setGameStarted(false); // Go back to intro screen
                 setIsGameOver(false); // Reset game over state for next game
-                setIsPaused(false); // Reset pause state
+                // isPaused reset removed
              }
         };
         window.addEventListener('keydown', handleRestart);
@@ -315,17 +321,15 @@ const Game: React.FC = () => {
         console.log("Starting game..."); // Debug log
         setIsGameOver(false); // Reset game over state
         setGameStarted(true);
-        setIsPaused(false); // Ensure game is not paused
+        // isPaused reset removed
         // Reset state if needed
         setLightDuration(INITIAL_LIGHT_DURATION);
         setDiscoveredTiles(new Set());
-        // Removed playerRotationY reset
         keysPressedRef.current = {};
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeft.current = false; // Reset moveLeft
-        moveRight.current = false; // Reset moveRight
-        // Removed rotate refs reset
+        rotateLeft.current = false; // Reset rotateLeft
+        rotateRight.current = false; // Reset rotateRight
         // Ensure last player position is reset for accurate decay calculation
         if (playerRef.current) {
              lastPlayerPosition.current.copy(playerRef.current.position);
@@ -344,10 +348,7 @@ const Game: React.FC = () => {
             lastPlayerPosition.current.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
         }
 
-        // Request pointer lock when game starts
-        requestAnimationFrame(() => { // Delay slightly to ensure controls are initialized
-             controlsRef.current?.lock();
-        });
+        // No pointer lock request needed
 
 
     }, [dungeonData]);
@@ -372,7 +373,7 @@ const Game: React.FC = () => {
         }
         rendererRef.current?.dispose();
         sceneRef.current?.clear(); // Clear scene content
-        controlsRef.current?.disconnect(); // Disconnect old controls
+        // controlsRef.current?.disconnect(); // Disconnect old controls removed
 
 
         // Reset refs
@@ -380,17 +381,15 @@ const Game: React.FC = () => {
         cameraRef.current = undefined;
         sceneRef.current = undefined;
         rendererRef.current = undefined;
-        controlsRef.current = null; // Reset controlsRef
+        // controlsRef reset removed
         playerGlowLightRef.current = undefined;
         dungeonGroupRef.current = new THREE.Group();
         interactableObjectsRef.current = [];
         keysPressedRef.current = {};
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeft.current = false; // Reset moveLeft
-        moveRight.current = false; // Reset moveRight
-        // Removed rotate refs reset
-        // Removed playerRotationY reset
+        rotateLeft.current = false; // Reset rotateLeft
+        rotateRight.current = false; // Reset rotateRight
         setIsGameOver(false); // Ensure game over is reset on setup
 
 
@@ -422,30 +421,30 @@ const Game: React.FC = () => {
         player.add(camera); // Add camera to the player group
         scene.add(player);
 
-        // Pointer Lock Controls Setup
-        const controls = new PointerLockControls(camera, renderer.domElement);
-        controlsRef.current = controls;
-        scene.add(controls.getObject()); // Add the controls' object (which is the camera) to the scene directly
+        // Pointer Lock Controls Setup removed
+        // const controls = new PointerLockControls(camera, renderer.domElement);
+        // controlsRef.current = controls;
+        // scene.add(controls.getObject()); // Add the controls' object (which is the camera) to the scene directly
 
-        // Handle Pointer Lock changes (for pausing)
-        const onLock = () => setIsPaused(false);
-        const onUnlock = () => setIsPaused(true);
-        controls.addEventListener('lock', onLock);
-        controls.addEventListener('unlock', onUnlock);
-        cleanupFunctions.current.push(() => {
-            controls.removeEventListener('lock', onLock);
-            controls.removeEventListener('unlock', onUnlock);
-            controls.disconnect(); // Ensure controls are disconnected on cleanup
-        });
+        // Handle Pointer Lock changes (for pausing) removed
+        // const onLock = () => setIsPaused(false);
+        // const onUnlock = () => setIsPaused(true);
+        // controls.addEventListener('lock', onLock);
+        // controls.addEventListener('unlock', onUnlock);
+        // cleanupFunctions.current.push(() => {
+        //     controls.removeEventListener('lock', onLock);
+        //     controls.removeEventListener('unlock', onUnlock);
+        //     controls.disconnect(); // Ensure controls are disconnected on cleanup
+        // });
 
-        // Add click listener to request pointer lock
-        const lockPointer = () => {
-             if (!isGameOver && isPaused) { // Only lock if not game over and currently paused
-                 controls.lock();
-             }
-        };
-        currentMount.addEventListener('click', lockPointer);
-        cleanupFunctions.current.push(() => currentMount.removeEventListener('click', lockPointer));
+        // Click listener for pointer lock removed
+        // const lockPointer = () => {
+        //      if (!isGameOver && isPaused) { // Only lock if not game over and currently paused
+        //          controls.lock();
+        //      }
+        // };
+        // currentMount.addEventListener('click', lockPointer);
+        // cleanupFunctions.current.push(() => currentMount.removeEventListener('click', lockPointer));
 
 
         // Set initial camera position WITHIN the player group
@@ -648,29 +647,27 @@ const Game: React.FC = () => {
         const handleKeyDown = (event: KeyboardEvent) => {
              // Allow Enter for game over restart, but block other controls if game over
              if (isGameOver && event.key !== 'Enter') return;
-             // Do not process movement keys if paused (pointer lock lost)
-             if (!gameStarted || isPaused) return;
+             // Do not process movement keys if game not started
+             if (!gameStarted) return;
 
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
              switch (key) {
                 case 'w': moveForward.current = true; break;
                 case 's': moveBackward.current = true; break;
-                case 'a': moveLeft.current = true; break; // Changed to moveLeft
-                case 'd': moveRight.current = true; break; // Changed to moveRight
-                // Removed Arrow Key handling
+                case 'arrowleft': rotateLeft.current = true; break; // ArrowLeft for rotation
+                case 'arrowright': rotateRight.current = true; break; // ArrowRight for rotation
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
-             if (!gameStarted || isGameOver) return; // Block key up if game over or paused
+             if (!gameStarted || isGameOver) return; // Block key up if game over
              const key = event.key.toLowerCase();
              keysPressedRef.current[key] = false;
              switch (key) {
                 case 'w': moveForward.current = false; break;
                 case 's': moveBackward.current = false; break;
-                case 'a': moveLeft.current = false; break; // Changed to moveLeft
-                case 'd': moveRight.current = false; break; // Changed to moveRight
-                 // Removed Arrow Key handling
+                case 'arrowleft': rotateLeft.current = false; break; // ArrowLeft for rotation
+                case 'arrowright': rotateRight.current = false; break; // ArrowRight for rotation
              }
         };
 
@@ -687,7 +684,7 @@ const Game: React.FC = () => {
 
        // --- Animation Loop ---
         const animate = () => {
-             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current || !controlsRef.current) {
+             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current) {
                  console.log("Animation loop stopped or refs missing");
                  animationFrameId.current = null; // Ensure ID is cleared
                  return;
@@ -786,33 +783,40 @@ const Game: React.FC = () => {
              });
 
 
-            // --- Player Movement (Only if game not over and not paused) ---
-             if (!isGameOver && !isPaused) {
+            // --- Player Movement and Rotation (Only if game not over) ---
+             if (!isGameOver) {
                  const speedDelta = MOVE_SPEED * delta;
+                 const rotationDelta = ROTATION_SPEED * delta;
                  const moveDirection = new THREE.Vector3(); // For forward/backward movement
-                 const rightDirection = new THREE.Vector3(); // For left/right movement
 
-                 // Get the camera's direction (where the player is looking)
-                 controlsRef.current.getDirection(moveDirection).normalize();
-                 // Calculate the right vector relative to the camera's direction
-                 rightDirection.crossVectors(cameraRef.current.up, moveDirection).normalize();
+                 // Get the player's forward direction (based on Y rotation)
+                 playerRef.current.getWorldDirection(moveDirection);
+                 moveDirection.y = 0; // Keep movement horizontal
+                 moveDirection.normalize();
 
 
                  // Reset velocity
                  playerVelocity.current.x = 0;
                  playerVelocity.current.z = 0;
 
-                 // Calculate movement based on keys pressed
+                 // Calculate movement based on keys pressed (W/S)
                  if (moveForward.current) playerVelocity.current.add(moveDirection);
                  if (moveBackward.current) playerVelocity.current.sub(moveDirection);
-                 if (moveLeft.current) playerVelocity.current.sub(rightDirection); // Use sub for left
-                 if (moveRight.current) playerVelocity.current.add(rightDirection); // Use add for right
 
                  // Normalize and scale velocity if there's movement input
                  if (playerVelocity.current.lengthSq() > 0.0001) {
                      playerVelocity.current.normalize().multiplyScalar(speedDelta);
                  } else {
                      playerVelocity.current.set(0,0,0); // Explicitly stop if no input
+                 }
+
+                 // --- Apply Rotation (Arrow Keys) ---
+                 let rotationY = 0;
+                 if (rotateLeft.current) rotationY += rotationDelta;
+                 if (rotateRight.current) rotationY -= rotationDelta;
+
+                 if (rotationY !== 0) {
+                      playerRef.current.rotation.y += rotationY;
                  }
 
 
@@ -855,10 +859,10 @@ const Game: React.FC = () => {
                  }
 
              } else {
-                 // Ensure velocity is zeroed when paused or game over
+                 // Ensure velocity is zeroed when game over
                  playerVelocity.current.set(0, 0, 0);
              }
-            // --- End Player Movement ---
+            // --- End Player Movement and Rotation ---
 
 
             rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -918,7 +922,7 @@ const Game: React.FC = () => {
               sceneRef.current = undefined;
               rendererRef.current = undefined;
               cameraRef.current = undefined;
-              controlsRef.current = null; // Reset controlsRef
+              // controlsRef reset removed
               playerRef.current = new THREE.Group(); // Recreate player group
               lastPlayerPosition.current.set(0,0,0);
               playerVelocity.current.set(0,0,0); // Reset velocity
@@ -928,12 +932,10 @@ const Game: React.FC = () => {
               // Correctly reset boolean refs
               moveForward.current = false;
               moveBackward.current = false;
-              moveLeft.current = false; // Reset moveLeft
-              moveRight.current = false; // Reset moveRight
-              // Removed rotate refs reset
-              // Removed playerRotationY reset
+              rotateLeft.current = false; // Reset rotateLeft
+              rotateRight.current = false; // Reset rotateRight
               setIsGameOver(false); // Ensure game over state is reset on full cleanup
-              setIsPaused(false); // Ensure paused state is reset
+              // isPaused reset removed
 
               console.log("Cleanup complete."); // Debug log
         };
@@ -944,19 +946,11 @@ const Game: React.FC = () => {
     const playerGridZ = playerRef.current ? Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5) : 0;
 
     return (
-        <div ref={mountRef} className="w-full h-full relative bg-black cursor-crosshair" onClick={lockPointer} /* Add onClick handler for pointer lock */ >
+        <div ref={mountRef} className="w-full h-full relative bg-black" /* No cursor change needed, no onClick for pointer lock */ >
              {gameStarted && ( // Only render HUD and Minimap if game has started
                  <>
                      {!isGameOver && <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />}
-                     {/* Pause Overlay */}
-                     {isPaused && !isGameOver && (
-                        <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20 text-white text-center pointer-events-auto">
-                            <div>
-                                <h2 className="text-3xl font-bold mb-4">Paused</h2>
-                                <p className="text-lg">Click to Resume</p>
-                            </div>
-                        </div>
-                     )}
+                     {/* Pause Overlay removed */}
                      <Minimap
                         dungeon={dungeonData}
                         playerX={playerGridX}
@@ -987,11 +981,8 @@ const Game: React.FC = () => {
     );
 };
 
-// Helper function moved outside component for potential reuse or clarity
-function lockPointer() {
-     if (controlsRef.current && !isGameOver && isPaused) {
-         controlsRef.current.lock();
-     }
-}
+// Helper function lockPointer removed
 
 export default Game;
+
+    
