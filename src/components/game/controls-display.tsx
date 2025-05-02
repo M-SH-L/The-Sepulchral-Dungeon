@@ -18,5 +18,3 @@ const ControlsDisplay: React.FC = () => {
 };
 
 export default ControlsDisplay;
-
-```
