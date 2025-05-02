@@ -10,6 +10,8 @@ import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
 import Minimap from './minimap';
 import { Geist_Mono } from 'next/font/google';
+import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'; // Import PointerLockControls
+
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
@@ -42,7 +44,7 @@ const PLAYER_RADIUS = 0.3;
 const COLLECTION_DISTANCE = 1.5; // Increased distance for automatic collection
 const CAMERA_EYE_LEVEL = PLAYER_HEIGHT * 0.9; // Place camera near the top of the player height
 const MOVE_SPEED = 3.5;
-const ROTATION_SPEED = Math.PI * 0.6; // Radians per second for turning
+// Removed ROTATION_SPEED as mouse controls handle rotation
 const DUNGEON_SIZE_WIDTH = 30;
 const DUNGEON_SIZE_HEIGHT = 30;
 const WALL_HEIGHT = 2.5;
@@ -54,7 +56,7 @@ const PLAYER_GLOW_COLOR = 0xffffff;
 const MIN_PLAYER_GLOW_INTENSITY = 0; // Intensity should be zero when light is out
 const MAX_PLAYER_GLOW_INTENSITY = 4.0; // Increased max intensity
 const MIN_PLAYER_GLOW_DISTANCE = 0; // Distance should be zero when light is out
-const MAX_PLAYER_GLOW_DISTANCE = 15.0; // Significantly increased max distance for wider light spread
+const MAX_PLAYER_GLOW_DISTANCE = 25.0; // Significantly increased max distance for wider light spread
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
@@ -70,7 +72,7 @@ const ZERO_LIGHT_FOG_COLOR = 0x000000; // Pure black fog when light is out
 
 // --- Normal Light State Constants ---
 const NORMAL_FOG_NEAR = 1;
-const NORMAL_FOG_FAR = 18; // Increased normal fog distance to match max light distance somewhat
+const NORMAL_FOG_FAR = MAX_PLAYER_GLOW_DISTANCE * 0.8; // Tie normal fog to max glow distance
 const NORMAL_FOG_COLOR = 0x100500; // Dark sepia/brown fog color
 
 
@@ -87,7 +89,7 @@ const GameHUD: React.FC<GameHUDProps> = ({ lightDuration, maxLightDuration }) =>
             <h3 className="font-bold mb-2 text-base border-b border-primary/50 pb-1">Controls</h3>
             <ul className="list-none space-y-1 text-xs mb-3">
                 <li><span className="font-semibold">[ W, A, S, D ]:</span> Move</li>
-                <li><span className="font-semibold">[ Arrow ← / → ]:</span> Look</li>
+                <li><span className="font-semibold">[ Mouse ]:</span> Look</li> {/* Updated control */}
             </ul>
              <h3 className="font-bold mb-1 text-base border-b border-primary/50 pb-1">Light Remaining</h3>
              <Progress value={lightPercentage} className="w-full h-3 mt-2 bg-secondary border border-input" />
@@ -131,7 +133,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                 </CardHeader>
                 <CardContent className="p-8 space-y-6 text-center">
                     <p className="text-foreground/90 leading-relaxed">
-                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and glance left/right with <span className="font-semibold text-primary-foreground/80">[Arrow Keys]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness. Run out of light, and the darkness takes you.
+                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and look around with the <span className="font-semibold text-primary-foreground/80">[Mouse]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness. Run out of light, and the darkness takes you. Click to begin.
                     </p>
                     <Button
                         onClick={onStartGame}
@@ -163,10 +165,12 @@ const getRandomOrbSize = (): OrbSize => {
 
 const Game: React.FC = () => {
     const mountRef = useRef<HTMLDivElement>(null);
+    const playerVelocity = useRef(new THREE.Vector3()); // For smoother movement
     const playerRef = useRef<THREE.Group>(new THREE.Group());
     const cameraRef = useRef<THREE.PerspectiveCamera>();
     const sceneRef = useRef<THREE.Scene>();
     const rendererRef = useRef<THREE.WebGLRenderer>();
+    const controlsRef = useRef<PointerLockControls | null>(null); // Ref for PointerLockControls
     const playerGlowLightRef = useRef<THREE.PointLight>();
     const dungeonGroupRef = useRef<THREE.Group>(new THREE.Group());
     const interactableObjectsRef = useRef<InteractableObject[]>([]);
@@ -174,11 +178,10 @@ const Game: React.FC = () => {
     const [gameStarted, setGameStarted] = useState(false);
     const moveForward = useRef(false);
     const moveBackward = useRef(false);
-    const moveLeftStrafe = useRef(false);
-    const moveRightStrafe = useRef(false);
-    const rotateLeft = useRef(false);
-    const rotateRight = useRef(false);
-    const playerRotationY = useRef(0);
+    const moveLeft = useRef(false); // Changed from strafe
+    const moveRight = useRef(false); // Changed from strafe
+    // Removed rotateLeft and rotateRight refs
+    // Removed playerRotationY ref
     const { toast } = useToast();
     const clock = useRef(new THREE.Clock());
     const cleanupFunctions = useRef<(() => void)[]>([]);
@@ -187,6 +190,8 @@ const Game: React.FC = () => {
     const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3());
     const animationFrameId = useRef<number | null>(null); // Use ref for animation frame ID
     const [isGameOver, setIsGameOver] = useState(false); // Game over state
+    const [isPaused, setIsPaused] = useState(false); // Pause state for pointer lock
+
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
@@ -224,7 +229,7 @@ const Game: React.FC = () => {
                      // Increase light duration
                      setLightDuration(currentDuration => {
                         const newDuration = Math.min(MAX_LIGHT_DURATION, currentDuration + obj.lightValue);
-                        console.log(`Collected ${obj.size} orb. Light: ${currentDuration} -> ${newDuration}`); // Debug log
+                        console.log(`Collected ${obj.size} orb. Light: ${currentDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log
                         return newDuration;
                      });
 
@@ -248,22 +253,24 @@ const Game: React.FC = () => {
     }, [toast, isGameOver]);
 
 
-    // Collision Detection
-    const isPositionValid = useCallback((newPosition: THREE.Vector3): boolean => {
+    // Collision Detection (using player's future position)
+    const isPositionValid = useCallback((futurePosition: THREE.Vector3): boolean => {
         const corners = [
-            new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS),
-            new THREE.Vector3(newPosition.x + PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS),
-            new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z - PLAYER_RADIUS),
-            new THREE.Vector3(newPosition.x - PLAYER_RADIUS, 0, newPosition.z + PLAYER_RADIUS),
+            new THREE.Vector3(futurePosition.x + PLAYER_RADIUS, 0, futurePosition.z + PLAYER_RADIUS),
+            new THREE.Vector3(futurePosition.x + PLAYER_RADIUS, 0, futurePosition.z - PLAYER_RADIUS),
+            new THREE.Vector3(futurePosition.x - PLAYER_RADIUS, 0, futurePosition.z - PLAYER_RADIUS),
+            new THREE.Vector3(futurePosition.x - PLAYER_RADIUS, 0, futurePosition.z + PLAYER_RADIUS),
         ];
+
         for (const corner of corners) {
             const gridX = Math.floor(corner.x / TILE_SIZE + 0.5);
             const gridZ = Math.floor(corner.z / TILE_SIZE + 0.5);
-            if (gridX < 0 || gridX >= DUNGEON_SIZE_WIDTH || gridZ < 0 || gridZ >= DUNGEON_SIZE_HEIGHT) return false;
+
+            if (gridX < 0 || gridX >= DUNGEON_SIZE_WIDTH || gridZ < 0 || gridZ >= DUNGEON_SIZE_HEIGHT) return false; // Check bounds first
             const tile = dungeonData[gridZ]?.[gridX];
-            if (tile === undefined || tile === DungeonTile.Wall) return false;
+            if (tile === undefined || tile === DungeonTile.Wall) return false; // Check for wall or undefined
         }
-        return true;
+        return true; // Position is valid
     }, [dungeonData]);
 
     // Game Over Function
@@ -273,11 +280,14 @@ const Game: React.FC = () => {
         // Stop movement refs
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeftStrafe.current = false;
-        moveRightStrafe.current = false;
-        rotateLeft.current = false;
-        rotateRight.current = false;
+        moveLeft.current = false;
+        moveRight.current = false;
+        // Removed rotate refs
         keysPressedRef.current = {}; // Clear all keys
+
+        // Unlock pointer lock on game over
+        controlsRef.current?.unlock();
+        setIsPaused(true); // Update pause state
 
         toast({
             title: "Consumed by Darkness",
@@ -292,6 +302,7 @@ const Game: React.FC = () => {
                 window.removeEventListener('keydown', handleRestart);
                 setGameStarted(false); // Go back to intro screen
                 setIsGameOver(false); // Reset game over state for next game
+                setIsPaused(false); // Reset pause state
              }
         };
         window.addEventListener('keydown', handleRestart);
@@ -304,17 +315,17 @@ const Game: React.FC = () => {
         console.log("Starting game..."); // Debug log
         setIsGameOver(false); // Reset game over state
         setGameStarted(true);
+        setIsPaused(false); // Ensure game is not paused
         // Reset state if needed
         setLightDuration(INITIAL_LIGHT_DURATION);
         setDiscoveredTiles(new Set());
-        playerRotationY.current = 0;
+        // Removed playerRotationY reset
         keysPressedRef.current = {};
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeftStrafe.current = false;
-        moveRightStrafe.current = false;
-        rotateLeft.current = false;
-        rotateRight.current = false;
+        moveLeft.current = false; // Reset moveLeft
+        moveRight.current = false; // Reset moveRight
+        // Removed rotate refs reset
         // Ensure last player position is reset for accurate decay calculation
         if (playerRef.current) {
              lastPlayerPosition.current.copy(playerRef.current.position);
@@ -332,6 +343,12 @@ const Game: React.FC = () => {
             }
             lastPlayerPosition.current.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
         }
+
+        // Request pointer lock when game starts
+        requestAnimationFrame(() => { // Delay slightly to ensure controls are initialized
+             controlsRef.current?.lock();
+        });
+
 
     }, [dungeonData]);
 
@@ -355,23 +372,25 @@ const Game: React.FC = () => {
         }
         rendererRef.current?.dispose();
         sceneRef.current?.clear(); // Clear scene content
+        controlsRef.current?.disconnect(); // Disconnect old controls
+
 
         // Reset refs
         playerRef.current = new THREE.Group();
         cameraRef.current = undefined;
         sceneRef.current = undefined;
         rendererRef.current = undefined;
+        controlsRef.current = null; // Reset controlsRef
         playerGlowLightRef.current = undefined;
         dungeonGroupRef.current = new THREE.Group();
         interactableObjectsRef.current = [];
         keysPressedRef.current = {};
         moveForward.current = false;
         moveBackward.current = false;
-        moveLeftStrafe.current = false;
-        moveRightStrafe.current = false;
-        rotateLeft.current = false;
-        rotateRight.current = false;
-        playerRotationY.current = 0;
+        moveLeft.current = false; // Reset moveLeft
+        moveRight.current = false; // Reset moveRight
+        // Removed rotate refs reset
+        // Removed playerRotationY reset
         setIsGameOver(false); // Ensure game over is reset on setup
 
 
@@ -388,6 +407,7 @@ const Game: React.FC = () => {
         cameraRef.current = camera;
         camera.position.y = CAMERA_EYE_LEVEL; // Set camera at eye level
 
+
         // Renderer Setup
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         rendererRef.current = renderer;
@@ -402,10 +422,35 @@ const Game: React.FC = () => {
         player.add(camera); // Add camera to the player group
         scene.add(player);
 
-        // Set initial camera look direction (important!)
-        const initialLookAtTarget = new THREE.Vector3(player.position.x, CAMERA_EYE_LEVEL, player.position.z - 1);
-        camera.lookAt(initialLookAtTarget);
-        camera.up.set(0, 1, 0); // Ensure camera is upright
+        // Pointer Lock Controls Setup
+        const controls = new PointerLockControls(camera, renderer.domElement);
+        controlsRef.current = controls;
+        scene.add(controls.getObject()); // Add the controls' object (which is the camera) to the scene directly
+
+        // Handle Pointer Lock changes (for pausing)
+        const onLock = () => setIsPaused(false);
+        const onUnlock = () => setIsPaused(true);
+        controls.addEventListener('lock', onLock);
+        controls.addEventListener('unlock', onUnlock);
+        cleanupFunctions.current.push(() => {
+            controls.removeEventListener('lock', onLock);
+            controls.removeEventListener('unlock', onUnlock);
+            controls.disconnect(); // Ensure controls are disconnected on cleanup
+        });
+
+        // Add click listener to request pointer lock
+        const lockPointer = () => {
+             if (!isGameOver && isPaused) { // Only lock if not game over and currently paused
+                 controls.lock();
+             }
+        };
+        currentMount.addEventListener('click', lockPointer);
+        cleanupFunctions.current.push(() => currentMount.removeEventListener('click', lockPointer));
+
+
+        // Set initial camera position WITHIN the player group
+        camera.position.set(0, CAMERA_EYE_LEVEL, 0); // Camera at eye level inside player group
+        player.rotation.y = 0; // Initialize player group rotation
 
         // Player Glow Light
         const playerGlowLight = new THREE.PointLight(PLAYER_GLOW_COLOR, MAX_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_DISTANCE);
@@ -437,10 +482,9 @@ const Game: React.FC = () => {
                   }
                }
           }
+         // Set player *group* position
          player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
          lastPlayerPosition.current.copy(player.position); // Initialize last position correctly
-         playerRotationY.current = 0; // Reset rotation
-         player.rotation.y = 0; // Apply reset rotation
          updateDiscovery(startX, startZ);
          console.log(`Player start position: (${startX * TILE_SIZE}, 0, ${startZ * TILE_SIZE})`); // Debug log
 
@@ -448,11 +492,9 @@ const Game: React.FC = () => {
         const wallGeometry = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
         const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
-        // Darker materials as primary light is player glow
-        // Ensure materials are not emissive unless intended (like orbs)
-        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, metalness: 0.1, emissive: 0x000000 }); // Darker brown, no emissive
-        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 }); // Darker floor, no emissive
-        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 }); // Darker ceiling, no emissive
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, metalness: 0.1, emissive: 0x000000 });
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 });
+        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 });
 
 
         const dungeonGroup = dungeonGroupRef.current;
@@ -606,31 +648,30 @@ const Game: React.FC = () => {
         const handleKeyDown = (event: KeyboardEvent) => {
              // Allow Enter for game over restart, but block other controls if game over
              if (isGameOver && event.key !== 'Enter') return;
-             if (!gameStarted) return; // Prevent controls before game starts
+             // Do not process movement keys if paused (pointer lock lost)
+             if (!gameStarted || isPaused) return;
 
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
              switch (key) {
                 case 'w': moveForward.current = true; break;
                 case 's': moveBackward.current = true; break;
-                case 'a': moveLeftStrafe.current = true; break;
-                case 'd': moveRightStrafe.current = true; break;
-                case 'arrowleft': rotateLeft.current = true; break;
-                case 'arrowright': rotateRight.current = true; break;
+                case 'a': moveLeft.current = true; break; // Changed to moveLeft
+                case 'd': moveRight.current = true; break; // Changed to moveRight
+                // Removed Arrow Key handling
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
-             if (!gameStarted || isGameOver) return; // Block key up if game over
-            const key = event.key.toLowerCase();
-            keysPressedRef.current[key] = false;
+             if (!gameStarted || isGameOver) return; // Block key up if game over or paused
+             const key = event.key.toLowerCase();
+             keysPressedRef.current[key] = false;
              switch (key) {
                 case 'w': moveForward.current = false; break;
                 case 's': moveBackward.current = false; break;
-                case 'a': moveLeftStrafe.current = false; break; // Ensure strafe stops on key up
-                case 'd': moveRightStrafe.current = false; break; // Ensure strafe stops on key up
-                case 'arrowleft': rotateLeft.current = false; break; // Ensure rotate stops on key up
-                case 'arrowright': rotateRight.current = false; break; // Ensure rotate stops on key up
-            }
+                case 'a': moveLeft.current = false; break; // Changed to moveLeft
+                case 'd': moveRight.current = false; break; // Changed to moveRight
+                 // Removed Arrow Key handling
+             }
         };
 
         // Add listeners and cleanup
@@ -646,7 +687,7 @@ const Game: React.FC = () => {
 
        // --- Animation Loop ---
         const animate = () => {
-             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current) {
+             if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current || !controlsRef.current) {
                  console.log("Animation loop stopped or refs missing");
                  animationFrameId.current = null; // Ensure ID is cleared
                  return;
@@ -659,29 +700,29 @@ const Game: React.FC = () => {
             let movedThisFrame = false; // Track if movement happened *this frame*
             if (!isGameOver) { // Only process movement/decay if game is not over
                 const currentPosition = playerRef.current.position;
-                const distanceMoved = lastPlayerPosition.current.distanceTo(currentPosition);
+                 // Calculate distance moved based on velocity to handle smooth movement decay
+                 const distanceMoved = playerVelocity.current.length() * delta;
                 movedThisFrame = distanceMoved > 0.001; // Use a small threshold
 
                 if (movedThisFrame && lightDuration > 0) { // Only decay if light is present and moving
                     setLightDuration(prevDuration => {
                         const decayAmount = distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED;
                         const newDuration = Math.max(0, prevDuration - decayAmount);
-                        console.log(`Moved: ${distanceMoved.toFixed(3)}, Decayed: ${decayAmount.toFixed(3)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log
+                         if (prevDuration > 0 && newDuration <= 0) {
+                            console.log(`Light ran out! Moved: ${distanceMoved.toFixed(3)}, Decayed: ${decayAmount.toFixed(3)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`);
+                            handleGameOver(); // Trigger game over immediately
+                         } else if (newDuration > 0) {
+                             // console.log(`Moved: ${distanceMoved.toFixed(3)}, Decayed: ${decayAmount.toFixed(3)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log only when still alive
+                         }
 
-                        if (newDuration <= 0 && prevDuration > 0) { // Check if light just ran out
-                            handleGameOver(); // Trigger game over
-                        }
                         return newDuration;
                     });
-                    lastPlayerPosition.current.copy(currentPosition); // Update last pos only if moved
                 } else if (lightDuration <= 0 && !isGameOver) {
                     // If light is already zero, ensure game over is triggered if not already
                     handleGameOver();
-                    lastPlayerPosition.current.copy(currentPosition);
-                } else {
-                    // If standing still, or light is already zero and game is over, just update last position
-                    lastPlayerPosition.current.copy(currentPosition);
                 }
+                 // Update lastPlayerPosition regardless of movement for discovery purposes
+                 lastPlayerPosition.current.copy(currentPosition);
             }
             // --- End Light Decay Logic ---
 
@@ -689,8 +730,10 @@ const Game: React.FC = () => {
             const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
             if (playerGlowLightRef.current) {
                 if (lightDuration > 0 && !isGameOver) { // Light only on if duration > 0 and not game over
-                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
-                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
+                    // Use an easing function for more dramatic light falloff
+                    const easedLightRatio = lightRatio * lightRatio; // Quadratic ease-out
+                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, easedLightRatio);
+                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, easedLightRatio);
                 } else {
                     // PITCH BLACK or Game Over: Ensure the light is completely off
                     playerGlowLightRef.current.intensity = ZERO_LIGHT_INTENSITY;
@@ -702,8 +745,6 @@ const Game: React.FC = () => {
                 const fogColor = new THREE.Color(); // Temporary color object
                 if (lightDuration > 0 && !isGameOver) {
                     fog.near = NORMAL_FOG_NEAR;
-                     // Fog distance shrinks significantly as light fades, smoothly interpolating to the pitch black value
-                     // Adjust interpolation for more dramatic effect - maybe non-linear?
                     const easedRatio = lightRatio * lightRatio; // Example: quadratic easing (faster fade near zero)
                     fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, easedRatio);
                     fogColor.setHex(NORMAL_FOG_COLOR);
@@ -745,96 +786,79 @@ const Game: React.FC = () => {
              });
 
 
-            // --- Player Movement and Rotation (Only if game not over) ---
-             if (!isGameOver) {
-                let rotationChange = 0;
-                if (rotateLeft.current) rotationChange += ROTATION_SPEED * delta;
-                if (rotateRight.current) rotationChange -= ROTATION_SPEED * delta;
-                if (Math.abs(rotationChange) > 0.001) {
-                    playerRotationY.current += rotationChange;
-                    playerRef.current.rotation.y = playerRotationY.current;
+            // --- Player Movement (Only if game not over and not paused) ---
+             if (!isGameOver && !isPaused) {
+                 const speedDelta = MOVE_SPEED * delta;
+                 const moveDirection = new THREE.Vector3(); // For forward/backward movement
+                 const rightDirection = new THREE.Vector3(); // For left/right movement
 
-                    // Update camera lookAt target based on player rotation AND eye level
-                    const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
-                    lookDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRotationY.current); // Apply current Y rotation
-                    lookDirection.normalize();
-
-                    // Calculate the target position for the camera to look at
-                    const lookAtTarget = new THREE.Vector3(); // Start at player's local origin (0,0,0 relative to group)
-                    lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead in the rotated direction
-                    lookAtTarget.y = CAMERA_EYE_LEVEL; // Keep looking at eye level
-
-                    // Transform the local lookAtTarget to world space based on player's position
-                    const worldLookAtTarget = playerRef.current.localToWorld(lookAtTarget.clone());
-
-                    // The camera itself is positioned at eye level within the player group
-                    // So we make it look at the calculated world target
-                    cameraRef.current.lookAt(worldLookAtTarget);
-                    cameraRef.current.up.set(0, 1, 0); // Ensure the camera remains upright
-                }
+                 // Get the camera's direction (where the player is looking)
+                 controlsRef.current.getDirection(moveDirection).normalize();
+                 // Calculate the right vector relative to the camera's direction
+                 rightDirection.crossVectors(cameraRef.current.up, moveDirection).normalize();
 
 
-                const moveDirection = new THREE.Vector3();
-                const strafeDirection = new THREE.Vector3();
-                // Get forward direction based on the player's current Y rotation
-                moveDirection.set(Math.sin(playerRotationY.current), 0, Math.cos(playerRotationY.current)).negate(); // Forward is -Z initially, rotate around Y
-                moveDirection.normalize();
+                 // Reset velocity
+                 playerVelocity.current.x = 0;
+                 playerVelocity.current.z = 0;
 
-                // Calculate right vector for strafing based on the forward direction
-                strafeDirection.crossVectors(playerRef.current.up, moveDirection).normalize(); // Right vector is up x forward
+                 // Calculate movement based on keys pressed
+                 if (moveForward.current) playerVelocity.current.add(moveDirection);
+                 if (moveBackward.current) playerVelocity.current.sub(moveDirection);
+                 if (moveLeft.current) playerVelocity.current.sub(rightDirection); // Use sub for left
+                 if (moveRight.current) playerVelocity.current.add(rightDirection); // Use add for right
 
-
-                const combinedMove = new THREE.Vector3();
-                if (moveForward.current) combinedMove.add(moveDirection);
-                if (moveBackward.current) combinedMove.sub(moveDirection);
-                if (moveLeftStrafe.current) combinedMove.sub(strafeDirection); // Strafe left uses negative right vector
-                if (moveRightStrafe.current) combinedMove.add(strafeDirection); // Strafe right uses positive right vector
-
-                // Normalize if moving diagonally, scale by speed and delta time
-                if (combinedMove.lengthSq() > 0.0001) { // Use a small threshold
-                    const actualMoveSpeed = MOVE_SPEED * delta;
-                    const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
-                    const currentPosBeforeMove = playerRef.current.position.clone();
-                    const nextPosition = currentPosBeforeMove.clone().add(moveAmount);
-
-                    if (isPositionValid(nextPosition)) {
-                        playerRef.current.position.copy(nextPosition);
-                    } else {
-                        // Sliding collision logic (try moving along X or Z axis separately)
-                        const moveXComponent = new THREE.Vector3(moveAmount.x, 0, 0);
-                        const nextPositionX = currentPosBeforeMove.clone().add(moveXComponent);
-                        const moveZComponent = new THREE.Vector3(0, 0, moveAmount.z);
-                        const nextPositionZ = currentPosBeforeMove.clone().add(moveZComponent);
-
-                        let movedX = false;
-                        let movedZ = false;
-
-                        if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
-                            playerRef.current.position.x = nextPositionX.x;
-                            movedX = true;
-                        }
-
-                        // Need to re-evaluate Z possibility after potential X move
-                        const currentPosForZCheck = playerRef.current.position.clone(); // Get position potentially updated by X move
-                        const nextPositionZAfterX = currentPosForZCheck.clone().add(moveZComponent);
-
-                        if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
-                            playerRef.current.position.z = nextPositionZAfterX.z;
-                            movedZ = true;
-                        }
-                    }
-                }
-            } // End of !isGameOver block for movement
-            // --- End Player Movement ---
+                 // Normalize and scale velocity if there's movement input
+                 if (playerVelocity.current.lengthSq() > 0.0001) {
+                     playerVelocity.current.normalize().multiplyScalar(speedDelta);
+                 } else {
+                     playerVelocity.current.set(0,0,0); // Explicitly stop if no input
+                 }
 
 
-            // Update discovered tiles and collect light if the player moved (and not game over)
-            if (movedThisFrame && !isGameOver) {
+                 // --- Apply Movement and Collision Detection ---
+                 if (playerVelocity.current.lengthSq() > 0.0001) { // Only check collision if moving
+                     const currentPos = playerRef.current.position;
+                     const nextPosition = currentPos.clone().add(playerVelocity.current);
+
+                     // Check X and Z axes separately for sliding
+                     const nextPositionX = currentPos.clone().setX(nextPosition.x);
+                     const nextPositionZ = currentPos.clone().setZ(nextPosition.z);
+
+                     let canMoveX = isPositionValid(nextPositionX);
+                     let canMoveZ = isPositionValid(nextPositionZ);
+
+                     // If direct move is invalid, check individual axes
+                     if (!isPositionValid(nextPosition)) {
+                          if (!canMoveX) {
+                             playerVelocity.current.x = 0; // Stop x movement if collision
+                          }
+                          if (!canMoveZ) {
+                             playerVelocity.current.z = 0; // Stop z movement if collision
+                          }
+                     }
+
+                     // Update player position based on adjusted velocity
+                     playerRef.current.position.add(playerVelocity.current);
+
+                 }
+
+                 // Update discovered tiles and collect light (only if player moved significantly)
                  const playerGridX = Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5);
                  const playerGridZ = Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5);
-                 updateDiscovery(playerGridX, playerGridZ);
-                 collectNearbyLight(); // Attempt to collect light *after* moving
-            }
+                 const lastGridX = Math.floor(lastPlayerPosition.current.x / TILE_SIZE + 0.5);
+                 const lastGridZ = Math.floor(lastPlayerPosition.current.z / TILE_SIZE + 0.5);
+
+                 if (playerGridX !== lastGridX || playerGridZ !== lastGridZ) {
+                     updateDiscovery(playerGridX, playerGridZ);
+                     collectNearbyLight(); // Attempt to collect light *after* moving to a new tile
+                 }
+
+             } else {
+                 // Ensure velocity is zeroed when paused or game over
+                 playerVelocity.current.set(0, 0, 0);
+             }
+            // --- End Player Movement ---
 
 
             rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -894,20 +918,22 @@ const Game: React.FC = () => {
               sceneRef.current = undefined;
               rendererRef.current = undefined;
               cameraRef.current = undefined;
+              controlsRef.current = null; // Reset controlsRef
               playerRef.current = new THREE.Group(); // Recreate player group
               lastPlayerPosition.current.set(0,0,0);
+              playerVelocity.current.set(0,0,0); // Reset velocity
               dungeonGroupRef.current = new THREE.Group();
               interactableObjectsRef.current = [];
               keysPressedRef.current = {};
               // Correctly reset boolean refs
               moveForward.current = false;
               moveBackward.current = false;
-              moveLeftStrafe.current = false;
-              moveRightStrafe.current = false;
-              rotateLeft.current = false;
-              rotateRight.current = false;
-              playerRotationY.current = 0;
+              moveLeft.current = false; // Reset moveLeft
+              moveRight.current = false; // Reset moveRight
+              // Removed rotate refs reset
+              // Removed playerRotationY reset
               setIsGameOver(false); // Ensure game over state is reset on full cleanup
+              setIsPaused(false); // Ensure paused state is reset
 
               console.log("Cleanup complete."); // Debug log
         };
@@ -918,10 +944,19 @@ const Game: React.FC = () => {
     const playerGridZ = playerRef.current ? Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5) : 0;
 
     return (
-        <div ref={mountRef} className="w-full h-full relative bg-black">
+        <div ref={mountRef} className="w-full h-full relative bg-black cursor-crosshair" onClick={lockPointer} /* Add onClick handler for pointer lock */ >
              {gameStarted && ( // Only render HUD and Minimap if game has started
                  <>
                      {!isGameOver && <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />}
+                     {/* Pause Overlay */}
+                     {isPaused && !isGameOver && (
+                        <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20 text-white text-center pointer-events-auto">
+                            <div>
+                                <h2 className="text-3xl font-bold mb-4">Paused</h2>
+                                <p className="text-lg">Click to Resume</p>
+                            </div>
+                        </div>
+                     )}
                      <Minimap
                         dungeon={dungeonData}
                         playerX={playerGridX}
@@ -951,5 +986,12 @@ const Game: React.FC = () => {
         </div>
     );
 };
+
+// Helper function moved outside component for potential reuse or clarity
+function lockPointer() {
+     if (controlsRef.current && !isGameOver && isPaused) {
+         controlsRef.current.lock();
+     }
+}
 
 export default Game;
