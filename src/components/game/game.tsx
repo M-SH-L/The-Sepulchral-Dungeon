@@ -60,11 +60,15 @@ const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
 const MAX_LIGHT_DURATION = 120; // Max light amount player can hold
 const LIGHT_DECAY_PER_UNIT_MOVED = 2.5; // Amount of light duration lost per unit distance moved
-const ZERO_LIGHT_INTENSITY = 0.01; // Extremely low intensity when light is out
-const ZERO_LIGHT_DISTANCE = 0.1; // Extremely low distance when light is out
-const ZERO_LIGHT_FOG_NEAR = 0.05; // Very near fog start
-const ZERO_LIGHT_FOG_FAR = 0.5; // Very near fog end - Pitch Black
+
+// --- Zero Light State Constants ---
+const ZERO_LIGHT_INTENSITY = 0;       // Player light intensity when out
+const ZERO_LIGHT_DISTANCE = 0;      // Player light distance when out
+const ZERO_LIGHT_FOG_NEAR = 0.01;     // Fog starts extremely close
+const ZERO_LIGHT_FOG_FAR = 0.1;      // Fog ends extremely quickly -> Pitch Black
 const ZERO_LIGHT_FOG_COLOR = 0x000000; // Pure black fog when light is out
+
+// --- Normal Light State Constants ---
 const NORMAL_FOG_NEAR = 1;
 const NORMAL_FOG_FAR = 12; // Slightly increased normal fog distance
 const NORMAL_FOG_COLOR = 0x100500; // Dark sepia/brown fog color
@@ -316,7 +320,7 @@ const Game: React.FC = () => {
         // Scene Setup
         const scene = new THREE.Scene();
         sceneRef.current = scene;
-        scene.background = new THREE.Color(ZERO_LIGHT_FOG_COLOR); // Start with dark background
+        scene.background = new THREE.Color(NORMAL_FOG_COLOR); // Use normal fog color initially
         scene.fog = new THREE.Fog(NORMAL_FOG_COLOR, NORMAL_FOG_NEAR, NORMAL_FOG_FAR); // Initial fog state
 
         // Camera Setup
@@ -332,9 +336,8 @@ const Game: React.FC = () => {
         renderer.toneMapping = THREE.NoToneMapping; // Use basic tone mapping
 
         // Set initial camera look direction (important!)
-        const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
-        // Correct initial look target - look slightly down from eye level to the ground in front
-        const initialLookAtTarget = new THREE.Vector3(playerRef.current.position.x, 0, playerRef.current.position.z - 1);
+        // Correct initial look target - look straight ahead from eye level
+        const initialLookAtTarget = new THREE.Vector3(playerRef.current.position.x, CAMERA_EYE_LEVEL, playerRef.current.position.z - 1);
         camera.lookAt(initialLookAtTarget);
         camera.up.set(0, 1, 0); // Ensure camera is upright
 
@@ -621,37 +624,43 @@ const Game: React.FC = () => {
             const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
             if (playerGlowLightRef.current) {
                 if (lightDuration > 0) {
-                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
-                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
+                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(ZERO_LIGHT_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
+                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(ZERO_LIGHT_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
                 } else {
-                    // PITCH BLACK: Turn off the light completely
+                    // PITCH BLACK: Ensure the light is completely off
                     playerGlowLightRef.current.intensity = ZERO_LIGHT_INTENSITY;
                     playerGlowLightRef.current.distance = ZERO_LIGHT_DISTANCE;
                 }
             }
             if (sceneRef.current?.fog) {
                 const fog = sceneRef.current.fog as THREE.Fog;
+                const fogColor = new THREE.Color(); // Temporary color object
                 if (lightDuration > 0) {
                     fog.near = NORMAL_FOG_NEAR;
-                    // Fog distance shrinks significantly as light fades, but stays slightly further than pitch black until light is fully out
-                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR + 0.5, NORMAL_FOG_FAR, lightRatio);
-                    (fog.color as THREE.Color).setHex(NORMAL_FOG_COLOR);
+                    // Fog distance shrinks significantly as light fades, smoothly interpolating to the pitch black value
+                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, lightRatio);
+                    fogColor.setHex(NORMAL_FOG_COLOR);
                 } else {
                     // PITCH BLACK: Make fog extremely close and black
                     fog.near = ZERO_LIGHT_FOG_NEAR;
                     fog.far = ZERO_LIGHT_FOG_FAR;
-                    (fog.color as THREE.Color).setHex(ZERO_LIGHT_FOG_COLOR);
+                    fogColor.setHex(ZERO_LIGHT_FOG_COLOR);
+                }
+                // Update fog color
+                if (fog.color instanceof THREE.Color) {
+                     fog.color.copy(fogColor); // Use copy to update the existing fog color
                 }
                  // Update background color to match fog color for seamless transition
                 if(sceneRef.current.background instanceof THREE.Color){
-                    sceneRef.current.background.setHex((fog.color as THREE.Color).getHex());
+                    sceneRef.current.background.copy(fogColor); // Use copy for background as well
                 }
             }
 
 
              // Animate Interactable Objects (Gentle Glow Pulse)
              interactableObjectsRef.current.forEach(obj => {
-                 if (obj.mesh.visible) { // Only animate visible orbs
+                // Only animate visible orbs AND turn off emissive when light is zero
+                 if (obj.mesh.visible && lightDuration > 0) {
                     // Pulsating emissive intensity
                     const baseIntensity = ORB_SIZES[obj.size].emissiveIntensity;
                     const pulse = (Math.sin(elapsedTime * 2.0 + obj.id * 1.1) + 1) / 2; // 0 to 1 sine wave
@@ -659,6 +668,12 @@ const Game: React.FC = () => {
                     if(material?.emissiveIntensity !== undefined) {
                          material.emissiveIntensity = baseIntensity * (0.8 + pulse * 0.4); // Pulse between 80% and 120% of base
                     }
+                 } else if (obj.mesh.visible && lightDuration <= 0) {
+                     // Turn off emissive completely when player light is out
+                     const material = obj.mesh.material as THREE.MeshStandardMaterial;
+                     if(material?.emissiveIntensity !== undefined) {
+                          material.emissiveIntensity = 0;
+                     }
                  }
              });
 
@@ -678,8 +693,9 @@ const Game: React.FC = () => {
 
                 // Calculate the target position for the camera to look at
                 const lookAtTarget = new THREE.Vector3().copy(playerRef.current.position); // Start at player's ground position
-                lookAtTarget.y = CAMERA_EYE_LEVEL; // Set target height to camera's eye level
-                lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead at eye level
+                // Ensure camera looks straight ahead from its eye level position within the player group
+                lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead
+                lookAtTarget.y = CAMERA_EYE_LEVEL; // Set the look-at height to the camera's eye level
 
                 cameraRef.current.lookAt(lookAtTarget);
                 cameraRef.current.up.set(0, 1, 0); // Ensure the camera remains upright
