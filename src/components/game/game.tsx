@@ -53,14 +53,14 @@ const OBJECT_HEIGHT_OFFSET = -0.2; // Place orbs slightly below center line of w
 
 const PLAYER_GLOW_COLOR = 0xffffff;
 const MIN_PLAYER_GLOW_INTENSITY = 0; // Intensity should be zero when light is out
-const MAX_PLAYER_GLOW_INTENSITY = 5.0; // Increased max intensity further
+const MAX_PLAYER_GLOW_INTENSITY = 8.0; // Increased max intensity significantly
 const MIN_PLAYER_GLOW_DISTANCE = 0; // Distance should be zero when light is out
-const MAX_PLAYER_GLOW_DISTANCE = 30.0; // Significantly increased max distance further
+const MAX_PLAYER_GLOW_DISTANCE = 40.0; // Increased max distance significantly
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
 const MAX_LIGHT_DURATION = 120; // Max light amount player can hold
-const LIGHT_DECAY_PER_UNIT_MOVED = 2.5; // Amount of light duration lost per unit distance moved
+const LIGHT_DECAY_PER_UNIT_MOVED = 1.5; // Decreased decay rate to make light last longer
 
 // --- Zero Light State Constants ---
 const ZERO_LIGHT_INTENSITY = 0;       // Player light intensity when out
@@ -799,9 +799,10 @@ const Game: React.FC = () => {
                  playerVelocity.current.z = 0;
 
                  // Calculate movement based on keys pressed (W/S)
-                 // Swap add and sub for W/S to fix inversion
+                 // Correct W/S logic
                  if (moveForward.current) playerVelocity.current.add(moveDirection);
                  if (moveBackward.current) playerVelocity.current.sub(moveDirection);
+
 
                  // Normalize and scale velocity if there's movement input
                  if (playerVelocity.current.lengthSq() > 0.0001) {
