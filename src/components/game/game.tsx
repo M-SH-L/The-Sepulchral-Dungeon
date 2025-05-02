@@ -54,7 +54,7 @@ const PLAYER_GLOW_COLOR = 0xffffff;
 const MIN_PLAYER_GLOW_INTENSITY = 0.5;
 const MAX_PLAYER_GLOW_INTENSITY = 3.0; // Increased max intensity for better visibility
 const MIN_PLAYER_GLOW_DISTANCE = 3.0; // Increased min distance
-const MAX_PLAYER_GLOW_DISTANCE = 8.0; // Increased max distance
+const MAX_PLAYER_GLOW_DISTANCE = 10.0; // Increased max distance for wider light spread
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
@@ -332,8 +332,10 @@ const Game: React.FC = () => {
         renderer.toneMapping = THREE.NoToneMapping; // Use basic tone mapping
 
         // Set initial camera look direction (important!)
-        const lookDirection = new THREE.Vector3(0, CAMERA_EYE_LEVEL, -1); // Look straight ahead at eye level
-        camera.lookAt(lookDirection);
+        const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
+        // Correct initial look target - look slightly down from eye level to the ground in front
+        const initialLookAtTarget = new THREE.Vector3(playerRef.current.position.x, 0, playerRef.current.position.z - 1);
+        camera.lookAt(initialLookAtTarget);
         camera.up.set(0, 1, 0); // Ensure camera is upright
 
 
@@ -594,12 +596,24 @@ const Game: React.FC = () => {
             if (movedThisFrame && lightDuration > 0) { // Only decay if light is present
                  setLightDuration(prevDuration => {
                      const newDuration = Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED);
+                     // Game Over check moved after update
+                     if (newDuration <= 0) {
+                         console.log("Light reached zero! Game Over.");
+                         // Handle game over (e.g., show message, stop interaction)
+                         // For now, just log it and prevent further decay/updates
+                         // setGameStarted(false); // Example: stop game loop
+                         return 0; // Ensure it stays at 0
+                     }
                      return newDuration;
                  });
                 lastPlayerPosition.current.copy(currentPosition);
-            } else if (lightDuration <= 0 && !movedThisFrame) {
-                 // Ensure last position is updated even if standing still in darkness
+            } else if (lightDuration <= 0) {
+                 // If light is already zero, ensure no negative values and update last position
                  lastPlayerPosition.current.copy(currentPosition);
+                 // Game Over logic could be more elaborate here if needed
+            } else {
+                // If standing still, update last position to avoid large jumps later
+                lastPlayerPosition.current.copy(currentPosition);
             }
             // --- End Light Decay Logic ---
 
@@ -657,15 +671,15 @@ const Game: React.FC = () => {
                 playerRotationY.current += rotationChange;
                 playerRef.current.rotation.y = playerRotationY.current;
 
-                 // Update camera lookAt target based on player rotation
+                 // Update camera lookAt target based on player rotation AND eye level
                 const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
                 lookDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRotationY.current); // Apply current Y rotation
                 lookDirection.normalize();
 
                 // Calculate the target position for the camera to look at
-                const lookAtTarget = new THREE.Vector3().copy(playerRef.current.position); // Start at player's position
+                const lookAtTarget = new THREE.Vector3().copy(playerRef.current.position); // Start at player's ground position
                 lookAtTarget.y = CAMERA_EYE_LEVEL; // Set target height to camera's eye level
-                lookAtTarget.add(lookDirection); // Add the rotated direction vector
+                lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead at eye level
 
                 cameraRef.current.lookAt(lookAtTarget);
                 cameraRef.current.up.set(0, 1, 0); // Ensure the camera remains upright
@@ -690,7 +704,6 @@ const Game: React.FC = () => {
 
             // Normalize if moving diagonally, scale by speed and delta time
             if (combinedMove.lengthSq() > 0.0001) { // Use a small threshold
-                combinedMove.normalize();
                 const actualMoveSpeed = MOVE_SPEED * delta;
                 const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
                 const currentPosBeforeMove = playerRef.current.position.clone();
