@@ -10,7 +10,6 @@ import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
 import Minimap from './minimap';
 import { Geist_Mono } from 'next/font/google';
-// PointerLockControls import removed as mouse interaction is removed
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
@@ -183,8 +182,6 @@ const Game: React.FC = () => {
     const [lightDuration, setLightDuration] = useState(INITIAL_LIGHT_DURATION);
     const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3());
     const animationFrameId = useRef<number | null>(null); // Use ref for animation frame ID
-    // controlsRef removed as mouse interaction is removed
-    // isPopupOpen state removed
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
@@ -334,8 +331,6 @@ const Game: React.FC = () => {
         renderer.shadowMap.enabled = false; // Shadows disabled for performance and simpler lighting
         renderer.toneMapping = THREE.NoToneMapping; // Use basic tone mapping
 
-        // Mouse/PointerLockControls Setup removed
-
         // Set initial camera look direction (important!)
         const lookDirection = new THREE.Vector3(0, CAMERA_EYE_LEVEL, -1); // Look straight ahead at eye level
         camera.lookAt(lookDirection);
@@ -343,7 +338,6 @@ const Game: React.FC = () => {
 
 
         // Lighting Setup - Only player glow light
-        // Ambient light removed
 
         // Player Setup
         const player = playerRef.current;
@@ -547,7 +541,6 @@ const Game: React.FC = () => {
             if (!gameStarted) return; // Prevent controls before game starts
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
-             // console.log("Key down:", key, keysPressedRef.current); // Debug log
              switch (key) {
                 case 'w': moveForward.current = true; break;
                 case 's': moveBackward.current = true; break;
@@ -561,7 +554,6 @@ const Game: React.FC = () => {
              if (!gameStarted) return;
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = false;
-            // console.log("Key up:", key, keysPressedRef.current); // Debug log
              switch (key) {
                 case 'w': moveForward.current = false; break;
                 case 's': moveBackward.current = false; break;
@@ -602,7 +594,6 @@ const Game: React.FC = () => {
             if (movedThisFrame && lightDuration > 0) { // Only decay if light is present
                  setLightDuration(prevDuration => {
                      const newDuration = Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED);
-                     // console.log(`Moved: ${distanceMoved.toFixed(2)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log
                      return newDuration;
                  });
                 lastPlayerPosition.current.copy(currentPosition);
@@ -647,10 +638,6 @@ const Game: React.FC = () => {
              // Animate Interactable Objects (Gentle Glow Pulse)
              interactableObjectsRef.current.forEach(obj => {
                  if (obj.mesh.visible) { // Only animate visible orbs
-                    // Keep rotation for slight visual interest if desired, but keep them stationary
-                    // obj.mesh.rotation.y += delta * 0.5;
-                    // obj.mesh.position.y = WALL_HEIGHT / 2 + OBJECT_HEIGHT_OFFSET; // Keep Y position fixed
-
                     // Pulsating emissive intensity
                     const baseIntensity = ORB_SIZES[obj.size].emissiveIntensity;
                     const pulse = (Math.sin(elapsedTime * 2.0 + obj.id * 1.1) + 1) / 2; // 0 to 1 sine wave
@@ -708,7 +695,6 @@ const Game: React.FC = () => {
                 const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
                 const currentPosBeforeMove = playerRef.current.position.clone();
                 const nextPosition = currentPosBeforeMove.clone().add(moveAmount);
-                // console.log("Attempting move:", moveAmount.toArray().map(n => n.toFixed(2))); // Debug log
 
                  if (isPositionValid(nextPosition)) {
                     playerRef.current.position.copy(nextPosition);
@@ -725,7 +711,6 @@ const Game: React.FC = () => {
                      if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
                          playerRef.current.position.x = nextPositionX.x;
                          movedX = true;
-                         // console.log("Moved X only"); // Debug log
                      }
 
                      // Need to re-evaluate Z possibility after potential X move
@@ -735,7 +720,6 @@ const Game: React.FC = () => {
                      if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
                           playerRef.current.position.z = nextPositionZAfterX.z;
                           movedZ = true;
-                          // console.log("Moved Z only (or after X)"); // Debug log
                      }
                  }
             }
@@ -822,7 +806,6 @@ const Game: React.FC = () => {
               rotateLeft.current = false;
               rotateRight.current = false;
               playerRotationY.current = 0;
-               // controlsRef cleanup removed
 
               console.log("Cleanup complete."); // Debug log
         };

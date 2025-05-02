@@ -10,10 +10,7 @@ interface InteractableObjectData {
     mesh: THREE.Mesh;
     id: number;
     size: OrbSize; // Keep size property
-    // Add 'used' property back, as filtering might happen here or in Game component
-    // If filtering happens in Game, this isn't strictly needed here but good practice
     used?: boolean; // Optional, depending on where filtering occurs
-    // Add 'visible' property if filtering based on visibility happens here
     visible?: boolean; // Optional
 }
 
@@ -39,8 +36,7 @@ const Minimap: React.FC<MinimapProps> = ({
     getTileKey,
 }) => {
     const mapSize = viewRadius * 2 + 1;
-    // Represents the tile type or 'P' (Player), 'O' (Object), 'U' (Undiscovered)
-    // Added specific object sizes 'Os', 'Om', 'Ol'
+    // Represents the tile type or 'P' (Player), 'Os', 'Om', 'Ol' (Object sizes), 'U' (Undiscovered)
     type MinimapTileContent = DungeonTile | 'P' | 'Os' | 'Om' | 'Ol' | 'U';
     const minimapGrid: MinimapTileContent[][] = Array.from({ length: mapSize }, () =>
         Array(mapSize).fill('U')
@@ -61,7 +57,6 @@ const Minimap: React.FC<MinimapProps> = ({
                     // Check for *visible and unused* interactable objects in this tile
                     const objectsInTile = interactableObjects.filter(obj => {
                         // Ensure object is not used and its mesh is visible
-                        // (Visibility check might be redundant if filtered in Game, but safe to keep)
                         if (obj.used || !obj.mesh.visible) return false;
 
                         const objGridX = Math.floor(obj.mesh.position.x / tileSize + 0.5);
@@ -70,8 +65,7 @@ const Minimap: React.FC<MinimapProps> = ({
                     });
 
                     // Mark tile based on the largest object found (if any)
-                    if (objectsInTile.length > 0 && !(y === viewRadius && x === viewRadius)) {
-                        // Find the largest orb size in this tile
+                    if (objectsInTile.length > 0 && !(y === viewRadius && x === viewRadius)) { // Exclude player tile
                         let largestSize: OrbSize | null = null;
                         objectsInTile.forEach(obj => {
                             if (!largestSize || obj.size === 'large' || (obj.size === 'medium' && largestSize === 'small')) {
@@ -81,7 +75,7 @@ const Minimap: React.FC<MinimapProps> = ({
 
                         if (largestSize === 'large') minimapGrid[y][x] = 'Ol';
                         else if (largestSize === 'medium') minimapGrid[y][x] = 'Om';
-                        else minimapGrid[y][x] = 'Os'; // Default to small if only small or null
+                        else minimapGrid[y][x] = 'Os';
                     }
                 } else {
                     minimapGrid[y][x] = DungeonTile.Wall; // Out-of-bounds discovered is wall
@@ -102,9 +96,10 @@ const Minimap: React.FC<MinimapProps> = ({
             case DungeonTile.Corridor: return 'bg-muted/60 hover:bg-muted/80';
             case DungeonTile.Wall: return 'bg-primary/70 hover:bg-primary/90';
             case 'P': return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30 animate-pulse';
-            case 'Os': return 'bg-yellow-300 border border-yellow-500 shadow-inner shadow-black/30 animate-pulse'; // Small Orb
-            case 'Om': return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Medium Orb
-            case 'Ol': return 'bg-yellow-500 border border-yellow-700 shadow-inner shadow-black/30 animate-pulse'; // Large Orb
+            // Update orb colors for better distinction
+            case 'Os': return 'bg-yellow-200 border border-yellow-400 shadow-inner shadow-black/30 animate-pulse'; // Lighter Yellow
+            case 'Om': return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Mid Yellow
+            case 'Ol': return 'bg-orange-400 border border-orange-600 shadow-inner shadow-black/30 animate-pulse'; // Orange for Large
             case 'U': return 'bg-black/50'; // Undiscovered
             default: return 'bg-black';
         }
@@ -119,6 +114,9 @@ const Minimap: React.FC<MinimapProps> = ({
              case 'Om': return `Medium Light Source at (${worldX}, ${worldZ})`;
              case 'Ol': return `Large Light Source at (${worldX}, ${worldZ})`;
              case 'U': return 'Undiscovered';
+             case DungeonTile.Floor: return `Floor at (${worldX}, ${worldZ})`;
+             case DungeonTile.Corridor: return `Corridor at (${worldX}, ${worldZ})`;
+             case DungeonTile.Wall: return `Wall at (${worldX}, ${worldZ})`;
              default: return `Tile: ${tile} at (${worldX}, ${worldZ})`;
          }
     };
