@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -343,13 +342,53 @@ const Game: React.FC = () => {
         renderer.toneMappingExposure = 0.7; // Adjust exposure as needed
 
         // PointerLockControls Setup
-        const controls = new PointerLockControls(camera, renderer.domElement);
-        controls.maxPolarAngle = Math.PI / 2; // Prevent looking above the horizon
-        controls.minPolarAngle = Math.PI / 2; // Prevent looking below the horizon
-        controlsRef.current = controls;
+        // const controls = new PointerLockControls(camera, renderer.domElement);
+        // controls.maxPolarAngle = Math.PI / 2; // Prevent looking above the horizon
+        // controls.minPolarAngle = Math.PI / 2; // Prevent looking below the horizon
+        // controlsRef.current = controls;
 
-        scene.add(controls.getObject());
+        // scene.add(controls.getObject());
 
+        // // Lock pointer on click
+        // const lockPointer = () => {
+        //     if (!isPopupOpen) { // Only lock if popup is not open
+        //          try {
+        //              controls.lock();
+        //          } catch (error) {
+        //              console.warn("Attempted to lock pointer, but failed:", error);
+        //              // Toast notification handled by the onPointerLockError handler
+        //          }
+        //     }
+        // };
+        // currentMount.addEventListener('click', lockPointer);
+
+        // // Event listener for pointer lock error
+        // const onPointerlockError = (event: any) => {
+        //     console.error('THREE.PointerLockControls: Unable to use Pointer Lock API.');
+        //     toast({
+        //         variant: 'destructive',
+        //         title: 'Pointer Lock Error',
+        //         description: 'Please ensure your browser supports Pointer Lock and that it is enabled.',
+        //     });
+        // };
+        // document.addEventListener('pointerlockerror', onPointerlockError);
+        // // Event listener for pointer lock change
+        // const onPointerlockChange = () => {
+        //     if (document.pointerLockElement === currentMount) {
+        //         setIsPopupOpen(false);
+        //     } else {
+        //         setIsPopupOpen(true);
+        //     }
+        // };
+        // document.addEventListener('pointerlockchange', onPointerlockChange);
+
+        // // Connect and Disconnect events
+        // controls.addEventListener('lock', function () {
+        //     setIsPopupOpen(false);
+        // });
+        // controls.addEventListener('unlock', function () {
+        //      setIsPopupOpen(true);
+        // });
 
         // Set initial camera direction (left/right only)
         const initialLookDirection = new THREE.Vector3(0, 0, -1);
@@ -613,8 +652,19 @@ const Game: React.FC = () => {
             if (Math.abs(rotationChange) > 0.001) {
                 playerRotationY.current += rotationChange;
                 playerRef.current.rotation.y = playerRotationY.current;
+
+                // Update camera lookAt target based on player rotation
+                const lookDirection = new THREE.Vector3(0, 0, -1);
+                lookDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRotationY.current); // Apply the rotation
+                lookDirection.normalize();
+
+                const newLookAt = new THREE.Vector3().copy(playerRef.current.position).add(lookDirection);
+                newLookAt.y = CAMERA_EYE_LEVEL; // Keep the camera looking at eye level
+
+                cameraRef.current.lookAt(newLookAt);
+                cameraRef.current.up.set(0, 1, 0); // Keep the camera upright
                 // console.log("Rotating:", playerRotationY.current); // Debug log
-                controlsRef.current.moveRight(-rotationChange*2);
+                // controlsRef.current.moveRight(-rotationChange*2);
             }
 
 
@@ -785,3 +835,4 @@ const Game: React.FC = () => {
 };
 
 export default Game;
+
