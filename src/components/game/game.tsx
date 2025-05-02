@@ -10,6 +10,7 @@ import { generateDungeon, DungeonTile } from './dungeon-generator';
 import { useToast } from '@/hooks/use-toast';
 import Minimap from './minimap';
 import { Geist_Mono } from 'next/font/google';
+import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
@@ -36,12 +37,6 @@ interface InteractableObject {
     lightValue: number; // How much light this orb gives
 }
 
-interface TorchData {
-    group: THREE.Group;
-    light: THREE.PointLight;
-    // Flame mesh is removed as per request
-}
-
 // Constants
 const PLAYER_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.3;
@@ -53,50 +48,32 @@ const DUNGEON_SIZE_WIDTH = 30;
 const DUNGEON_SIZE_HEIGHT = 30;
 const WALL_HEIGHT = 2.5;
 const TILE_SIZE = 1.0;
-const ROOM_TORCH_PROBABILITY = 0.04;
-const CORRIDOR_TORCH_PROBABILITY = 0.12;
-const OBJECT_PROBABILITY = 0.06; // Slightly increased chance for objects
+// Torch probabilities removed
+const OBJECT_PROBABILITY = 0.08; // Slightly increased chance for objects
 const OBJECT_HEIGHT = PLAYER_HEIGHT * 0.7; // Keep objects at eye level
-const BASE_TORCH_LIGHT_INTENSITY = 1.8;
-const TORCH_LIGHT_DISTANCE = 6.0;
-const TORCH_LIGHT_COLOR = 0xffa54a;
-const TORCH_WALL_OFFSET = 0.05;
-const TORCH_HEIGHT_OFFSET = 1.5;
-const FLICKER_SPEED = 4.0;
-const FLICKER_INTENSITY_VARIATION = 0.6;
+// Torch constants removed
+
+// Flicker constants removed (as torches are removed)
 const PLAYER_GLOW_COLOR = 0xffffff;
 const MIN_PLAYER_GLOW_INTENSITY = 0.5;
-const MAX_PLAYER_GLOW_INTENSITY = 2.5;
-const MIN_PLAYER_GLOW_DISTANCE = 2.0;
-const MAX_PLAYER_GLOW_DISTANCE = 6.0;
+const MAX_PLAYER_GLOW_INTENSITY = 3.0; // Increased max intensity for better visibility
+const MIN_PLAYER_GLOW_DISTANCE = 3.0; // Increased min distance
+const MAX_PLAYER_GLOW_DISTANCE = 8.0; // Increased max distance
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
-const INITIAL_LIGHT_DURATION = 60; // Starting light amount (like seconds, but decreases with movement)
+const INITIAL_LIGHT_DURATION = 60; // Starting light amount
 const MAX_LIGHT_DURATION = 120; // Max light amount player can hold
 const LIGHT_DECAY_PER_UNIT_MOVED = 2.5; // Amount of light duration lost per unit distance moved
-const ZERO_LIGHT_INTENSITY = 0.1; // Player glow intensity when light is out
-const ZERO_LIGHT_DISTANCE = 0.5; // Player glow distance when light is out
-const ZERO_LIGHT_FOG_NEAR = 0.1;
-const ZERO_LIGHT_FOG_FAR = 1.5; // Reduced fog visibility when light is out
-const ZERO_LIGHT_FOG_COLOR = 0x100804; // Darker fog when light is out
+const ZERO_LIGHT_INTENSITY = 0.01; // Extremely low intensity when light is out
+const ZERO_LIGHT_DISTANCE = 0.1; // Extremely low distance when light is out
+const ZERO_LIGHT_FOG_NEAR = 0.05; // Very near fog start
+const ZERO_LIGHT_FOG_FAR = 0.5; // Very near fog end - Pitch Black
+const ZERO_LIGHT_FOG_COLOR = 0x000000; // Pure black fog when light is out
 const NORMAL_FOG_NEAR = 1;
-const NORMAL_FOG_FAR = 10;
-const NORMAL_FOG_COLOR = 0x2a1a10; // Default fog color
+const NORMAL_FOG_FAR = 12; // Slightly increased normal fog distance
+const NORMAL_FOG_COLOR = 0x100500; // Dark sepia/brown fog color
 
-// Function to create a torch light source embedded in the wall - Unchanged
-const createTorch = (position: THREE.Vector3): TorchData => {
-    const torchGroup = new THREE.Group();
-    const pointLight = new THREE.PointLight(TORCH_LIGHT_COLOR, BASE_TORCH_LIGHT_INTENSITY, TORCH_LIGHT_DISTANCE);
-    pointLight.position.set(0, TORCH_HEIGHT_OFFSET, 0);
-    pointLight.castShadow = true;
-    pointLight.shadow.mapSize.width = 256;
-    pointLight.shadow.mapSize.height = 256;
-    pointLight.shadow.bias = -0.01;
-    pointLight.name = "torchLight";
-    torchGroup.add(pointLight);
-    torchGroup.position.copy(position);
-    return { group: torchGroup, light: pointLight };
-};
+// Function to create a torch removed
 
 // HUD Component - Unchanged
 interface GameHUDProps {
@@ -160,6 +137,8 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                     <Button
                         onClick={onStartGame}
                         className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6 shadow-md hover:shadow-lg transition-shadow duration-300 border border-primary-foreground/30"
+                        // Ensure button has focus initially for Enter key press
+                        autoFocus
                     >
                         Dare to Explore (or press Enter)
                     </Button>
@@ -192,9 +171,8 @@ const Game: React.FC = () => {
     const playerGlowLightRef = useRef<THREE.PointLight>();
     const dungeonGroupRef = useRef<THREE.Group>(new THREE.Group());
     const interactableObjectsRef = useRef<InteractableObject[]>([]);
-    const torchesRef = useRef<TorchData[]>([]);
+    // torchesRef removed
     const keysPressedRef = useRef<{ [key: string]: boolean }>({});
-    // nearbyObjectRef is no longer needed for explicit interaction
     const [gameStarted, setGameStarted] = useState(false);
     const moveForward = useRef(false);
     const moveBackward = useRef(false);
@@ -209,7 +187,9 @@ const Game: React.FC = () => {
     const [discoveredTiles, setDiscoveredTiles] = useState<Set<string>>(new Set());
     const [lightDuration, setLightDuration] = useState(INITIAL_LIGHT_DURATION);
     const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3());
-
+    const animationFrameId = useRef<number | null>(null); // Use ref for animation frame ID
+    const controlsRef = useRef<PointerLockControls | null>(null);
+    const [isPopupOpen, setIsPopupOpen] = useState(false);
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
@@ -234,7 +214,7 @@ const Game: React.FC = () => {
         });
     }, []);
 
-    // Automatic Light Collection Logic - Replaces handleInteraction
+    // Automatic Light Collection Logic - Unchanged
     const collectNearbyLight = useCallback(() => {
         if (!playerRef.current) return; // Ensure player ref exists
         const playerPos = playerRef.current.position;
@@ -249,7 +229,6 @@ const Game: React.FC = () => {
                      // Mark object as used and hide it
                      obj.used = true;
                      obj.mesh.visible = false;
-                     // We don't need to remove from array, just filter in minimap
 
                      // Provide feedback
                      toast({
@@ -262,9 +241,6 @@ const Game: React.FC = () => {
                  }
             }
         });
-
-        // Filter interactableObjectsRef to remove used objects for efficiency if needed (optional)
-        // interactableObjectsRef.current = interactableObjectsRef.current.filter(obj => !obj.used);
 
     }, [toast]); // Added toast dependency
 
@@ -289,90 +265,114 @@ const Game: React.FC = () => {
 
     // Start Game Function - Unchanged
     const startGame = useCallback(() => {
+        console.log("Starting game..."); // Debug log
         setGameStarted(true);
-        if (playerRef.current) {
-            lastPlayerPosition.current.copy(playerRef.current.position);
-        }
+        // Reset state if needed (redundant if cleanup is working, but safe)
+        setLightDuration(INITIAL_LIGHT_DURATION);
+        setDiscoveredTiles(new Set());
+        playerRotationY.current = 0;
+        keysPressedRef.current = {};
+        moveForward.current = false;
+        moveBackward.current = false;
+        moveLeftStrafe.current = false;
+        moveRightStrafe.current = false;
+        rotateLeft.current = false;
+        rotateRight.current = false;
     }, []);
 
-     // Check for adjacent walls (helper function) - Unchanged
-    const isAdjacentToWall = (x: number, z: number, dungeon: DungeonTile[][]): boolean => {
-         return dungeon[z + 1]?.[x] === DungeonTile.Wall ||
-                dungeon[z - 1]?.[x] === DungeonTile.Wall ||
-                dungeon[z]?.[x + 1] === DungeonTile.Wall ||
-                dungeon[z]?.[x - 1] === DungeonTile.Wall;
-    };
-
-    // Find a suitable wall position for a torch - Unchanged
-    const findTorchWallPosition = (x: number, z: number, dungeon: DungeonTile[][]): { position: THREE.Vector3, normal: THREE.Vector3 } | null => {
-         const tileCenterX = x * TILE_SIZE;
-         const tileCenterZ = z * TILE_SIZE;
-         let torchPos = new THREE.Vector3(tileCenterX, TORCH_HEIGHT_OFFSET, tileCenterZ);
-         let wallNormal = new THREE.Vector3(0, 0, 0);
-         let foundWall = false;
-
-         if (dungeon[z]?.[x + 1] === DungeonTile.Wall) { // Wall to the East
-             torchPos.x += TILE_SIZE / 2 - TORCH_WALL_OFFSET;
-             wallNormal.set(-1, 0, 0); foundWall = true;
-         } else if (dungeon[z]?.[x - 1] === DungeonTile.Wall) { // Wall to the West
-             torchPos.x -= TILE_SIZE / 2 - TORCH_WALL_OFFSET;
-             wallNormal.set(1, 0, 0); foundWall = true;
-         } else if (dungeon[z + 1]?.[x] === DungeonTile.Wall) { // Wall to the South
-             torchPos.z += TILE_SIZE / 2 - TORCH_WALL_OFFSET;
-             wallNormal.set(0, 0, -1); foundWall = true;
-         } else if (dungeon[z - 1]?.[x] === DungeonTile.Wall) { // Wall to the North
-             torchPos.z -= TILE_SIZE / 2 - TORCH_WALL_OFFSET;
-             wallNormal.set(0, 0, 1); foundWall = true;
-         }
-
-         return foundWall ? { position: torchPos, normal: wallNormal } : null;
-    }
-
+    // Functions related to torches removed
 
     // Initial Setup Effect
     useEffect(() => {
         if (!mountRef.current || !gameStarted) return;
 
+        console.log("Game useEffect triggered"); // Debug log
+
+        // Cleanup previous instances
         cleanupFunctions.current.forEach(cleanup => cleanup());
         cleanupFunctions.current = [];
+        if (animationFrameId.current) {
+            cancelAnimationFrame(animationFrameId.current);
+            animationFrameId.current = null;
+        }
+        if (rendererRef.current?.domElement && mountRef.current.contains(rendererRef.current.domElement)) {
+            try { mountRef.current.removeChild(rendererRef.current.domElement); }
+            catch (e) { console.warn("Error removing previous renderer DOM element:", e); }
+        }
+        rendererRef.current?.dispose();
+        sceneRef.current?.clear(); // Clear scene content
+
+        // Reset refs
+        playerRef.current = new THREE.Group();
+        cameraRef.current = undefined;
+        sceneRef.current = undefined;
+        rendererRef.current = undefined;
+        playerGlowLightRef.current = undefined;
+        dungeonGroupRef.current = new THREE.Group();
+        interactableObjectsRef.current = [];
+        keysPressedRef.current = {};
+        moveForward.current = false;
+        moveBackward.current = false;
+        moveLeftStrafe.current = false;
+        moveRightStrafe.current = false;
+        rotateLeft.current = false;
+        rotateRight.current = false;
+        playerRotationY.current = 0;
+
+
         const currentMount = mountRef.current;
 
         // Scene Setup
         const scene = new THREE.Scene();
         sceneRef.current = scene;
-        scene.background = new THREE.Color(NORMAL_FOG_COLOR); // Match fog color
+        scene.background = new THREE.Color(ZERO_LIGHT_FOG_COLOR); // Start with dark background matching zero light fog
         scene.fog = new THREE.Fog(NORMAL_FOG_COLOR, NORMAL_FOG_NEAR, NORMAL_FOG_FAR);
 
         // Camera Setup
         const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
         cameraRef.current = camera;
         camera.position.y = CAMERA_EYE_LEVEL;
-        camera.lookAt(0, CAMERA_EYE_LEVEL, -1);
 
         // Renderer Setup
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         rendererRef.current = renderer;
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.enabled = true; // Shadows can still be cast by player/objects if needed
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.7;
+        renderer.toneMappingExposure = 0.7; // Adjust exposure as needed
 
-        // Lighting Setup
-        const ambientLight = new THREE.AmbientLight(0x403020, 0.15); // Keep a dim ambient light
-        scene.add(ambientLight);
+        // PointerLockControls Setup
+        const controls = new PointerLockControls(camera, renderer.domElement);
+        controls.maxPolarAngle = Math.PI / 2; // Prevent looking above the horizon
+        controls.minPolarAngle = Math.PI / 2; // Prevent looking below the horizon
+        controlsRef.current = controls;
+
+        scene.add(controls.getObject());
+
+
+        // Set initial camera direction (left/right only)
+        const initialLookDirection = new THREE.Vector3(0, 0, -1);
+        camera.lookAt(initialLookDirection);
+
+
+        // Lighting Setup - Only player glow light
+        // Ambient light removed
 
         // Player Setup
         const player = playerRef.current;
-        player.position.y = 0;
-        player.add(camera);
+        player.position.y = 0; // Place player group at ground level
+        player.add(camera); // Add camera to the player group
         scene.add(player);
 
         // Player Glow Light
         const playerGlowLight = new THREE.PointLight(PLAYER_GLOW_COLOR, MAX_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_DISTANCE);
-        playerGlowLight.position.set(0, PLAYER_HEIGHT * 0.5, 0);
-        playerGlowLight.castShadow = false;
-        player.add(playerGlowLight);
+        playerGlowLight.position.set(0, PLAYER_HEIGHT * 0.5, 0); // Center light within player height
+        playerGlowLight.castShadow = true; // Player glow can cast shadows
+        playerGlowLight.shadow.mapSize.width = 512; // Increase shadow map size for better quality
+        playerGlowLight.shadow.mapSize.height = 512;
+        playerGlowLight.shadow.bias = -0.005; // Adjust bias carefully
+        player.add(playerGlowLight); // Add light to player group
         playerGlowLightRef.current = playerGlowLight;
 
         // Find starting position and initialize discovered tiles - Unchanged logic
@@ -399,21 +399,23 @@ const Game: React.FC = () => {
           }
          player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
          lastPlayerPosition.current.copy(player.position);
-         playerRotationY.current = 0;
+         playerRotationY.current = 0; // Reset rotation
+         player.rotation.y = 0; // Apply reset rotation
+        // camera.lookAt(player.position.x, CAMERA_EYE_LEVEL, player.position.z - 1); // Initial look direction
          updateDiscovery(startX, startZ);
+         console.log(`Player start position: (${startX * TILE_SIZE}, 0, ${startZ * TILE_SIZE})`); // Debug log
 
-
-        // Dungeon Rendering (Torches and Objects)
+        // Dungeon Rendering (Objects only, no torches)
         const wallGeometry = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
         const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
-        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x654321, roughness: 0.9, metalness: 0.1 });
-        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x8B7355, side: THREE.DoubleSide, roughness: 1.0 });
-        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x5a3f2a, side: THREE.DoubleSide, roughness: 1.0 });
+        // Darker materials as primary light is player glow
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, metalness: 0.1 }); // Darker brown
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, side: THREE.DoubleSide, roughness: 1.0 }); // Darker floor
+        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, side: THREE.DoubleSide, roughness: 1.0 }); // Darker ceiling
 
         const dungeonGroup = dungeonGroupRef.current;
         dungeonGroup.clear();
-        torchesRef.current = [];
         interactableObjectsRef.current = []; // Clear previous objects
 
         dungeonData.forEach((row, z) => {
@@ -424,39 +426,27 @@ const Game: React.FC = () => {
                 if (tile === DungeonTile.Wall) {
                     const wall = new THREE.Mesh(wallGeometry, wallMaterial);
                     wall.position.set(tileCenterX, WALL_HEIGHT / 2, tileCenterZ);
-                    wall.receiveShadow = true; wall.castShadow = true;
+                    wall.receiveShadow = true; wall.castShadow = true; // Walls cast/receive shadows from player glow
                     dungeonGroup.add(wall);
                 } else if (tile === DungeonTile.Floor || tile === DungeonTile.Corridor) {
                     const floor = new THREE.Mesh(floorGeometry, floorMaterial);
                     floor.position.set(tileCenterX, 0, tileCenterZ);
-                    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+                    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; // Floor receives shadows
                     dungeonGroup.add(floor);
 
                     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
                     ceiling.position.set(tileCenterX, WALL_HEIGHT, tileCenterZ);
-                    ceiling.rotation.x = Math.PI / 2; ceiling.receiveShadow = true;
+                    ceiling.rotation.x = Math.PI / 2; ceiling.receiveShadow = true; // Ceiling receives shadows
                     dungeonGroup.add(ceiling);
 
-                    const isCorridor = tile === DungeonTile.Corridor;
-                    const torchProbability = isCorridor ? CORRIDOR_TORCH_PROBABILITY : ROOM_TORCH_PROBABILITY;
+                    // Torch placement logic removed
 
-                    // Place torches - Unchanged logic
-                     if (isAdjacentToWall(x, z, dungeonData) && Math.random() < torchProbability) {
-                         const torchWallData = findTorchWallPosition(x, z, dungeonData);
-                         if (torchWallData) {
-                             const torchData = createTorch(torchWallData.position);
-                             dungeonGroup.add(torchData.group);
-                             torchesRef.current.push(torchData);
-                         }
-                     }
-
-                    // Place interactable light objects (orbs)
+                    // Place interactable light objects (orbs) - Unchanged placement logic
                     if (tile === DungeonTile.Floor && Math.random() < OBJECT_PROBABILITY) {
                         const orbSize = getRandomOrbSize();
                         const sizeProps = ORB_SIZES[orbSize];
 
-                        // Ensure geometry reflects the size visually
-                        const objectGeometry = new THREE.IcosahedronGeometry(sizeProps.scale, 1); // Increased subdivision for smoother look
+                        const objectGeometry = new THREE.IcosahedronGeometry(sizeProps.scale, 1);
                          const objectMaterial = new THREE.MeshStandardMaterial({
                              color: sizeProps.color,
                              emissive: sizeProps.color,
@@ -466,15 +456,14 @@ const Game: React.FC = () => {
                          });
                         const lightSourceMesh = new THREE.Mesh(objectGeometry, objectMaterial);
                         lightSourceMesh.position.set(tileCenterX, OBJECT_HEIGHT, tileCenterZ);
-                        lightSourceMesh.castShadow = false;
+                        lightSourceMesh.castShadow = false; // Orbs don't cast shadows themselves
                         lightSourceMesh.receiveShadow = false;
                         lightSourceMesh.rotation.x = Math.random() * Math.PI;
                         lightSourceMesh.rotation.y = Math.random() * Math.PI;
                         dungeonGroup.add(lightSourceMesh);
 
-                        // Add unique ID for easier tracking/debugging if needed
                         const objectId = interactableObjectsRef.current.length;
-                        lightSourceMesh.name = `lightOrb_${objectId}`; // Name the mesh
+                        lightSourceMesh.name = `lightOrb_${objectId}`;
 
                         interactableObjectsRef.current.push({
                             mesh: lightSourceMesh,
@@ -491,6 +480,12 @@ const Game: React.FC = () => {
         scene.add(dungeonGroup);
 
         currentMount.appendChild(renderer.domElement);
+        cleanupFunctions.current.push(() => {
+             if (currentMount && renderer.domElement && currentMount.contains(renderer.domElement)) {
+                 try { currentMount.removeChild(renderer.domElement); }
+                 catch (e) { /* Ignore potential error during rapid cleanup */ }
+             }
+         });
 
         // Handle window resize - Unchanged
         const handleResize = () => {
@@ -503,11 +498,13 @@ const Game: React.FC = () => {
         window.addEventListener('resize', handleResize);
         cleanupFunctions.current.push(() => window.removeEventListener('resize', handleResize));
 
-        // Keyboard controls - Unchanged
+        // Keyboard controls - Unchanged logic, but ensure they work
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (!gameStarted) return; // Prevent controls before game starts
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
-            switch (key) {
+             // console.log("Key down:", key, keysPressedRef.current); // Debug log
+             switch (key) {
                 case 'w': moveForward.current = true; break;
                 case 's': moveBackward.current = true; break;
                 case 'a': moveLeftStrafe.current = true; break;
@@ -517,104 +514,117 @@ const Game: React.FC = () => {
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
+             if (!gameStarted) return;
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = false;
+            // console.log("Key up:", key, keysPressedRef.current); // Debug log
              switch (key) {
                 case 'w': moveForward.current = false; break;
                 case 's': moveBackward.current = false; break;
-                case 'a': moveLeftStrafe.current = false; break;
-                case 'd': moveRightStrafe.current = false; break;
+                case 'a': moveLeftStrafe.current = true; break;
+                case 'd': moveRightStrafe.current = true; break;
                 case 'arrowleft': rotateLeft.current = false; break;
                 case 'arrowright': rotateRight.current = false; break;
             }
         };
+
+        // Add listeners and cleanup
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
-        cleanupFunctions.current.push(() => window.removeEventListener('keydown', handleKeyDown));
-        cleanupFunctions.current.push(() => window.removeEventListener('keyup', handleKeyUp));
+        cleanupFunctions.current.push(() => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+            console.log("Removed key listeners"); // Debug log
+        });
+        console.log("Added key listeners"); // Debug log
 
-        // Animation Loop
-        let frameId: number;
+
+        // --- Animation Loop ---
         const animate = () => {
              if (!gameStarted || !rendererRef.current || !sceneRef.current || !cameraRef.current || !playerRef.current) {
-                 if (frameId) cancelAnimationFrame(frameId);
+                 console.log("Animation loop stopped or refs missing");
+                 animationFrameId.current = null; // Ensure ID is cleared
                  return;
              }
-            frameId = requestAnimationFrame(animate);
+            animationFrameId.current = requestAnimationFrame(animate); // Store frame ID
             const delta = clock.current.getDelta();
             const elapsedTime = clock.current.getElapsedTime();
 
-            // --- Light Decay Logic ---
+            // --- Light Decay Logic --- Unchanged
             const currentPosition = playerRef.current.position;
             const distanceMoved = lastPlayerPosition.current.distanceTo(currentPosition);
+            let movedThisFrame = distanceMoved > 0.001; // Use a small threshold
 
-            if (distanceMoved > 0.01) {
-                setLightDuration(prevDuration => Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED));
+            if (movedThisFrame) {
+                 setLightDuration(prevDuration => {
+                     const newDuration = Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED);
+                     // console.log(`Moved: ${distanceMoved.toFixed(2)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log
+                     return newDuration;
+                 });
                 lastPlayerPosition.current.copy(currentPosition);
             }
             // --- End Light Decay Logic ---
 
-             // Update Player Glow AND Scene Fog based on remaining light duration
-             const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
-             if (playerGlowLightRef.current) {
+            // Update Player Glow AND Scene Fog based on remaining light duration - Pitch black logic added
+            const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
+            if (playerGlowLightRef.current) {
                 if (lightDuration > 0) {
                     playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
                     playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
                 } else {
-                    // Drastically reduce light when duration is zero
+                    // PITCH BLACK: Turn off the light completely
                     playerGlowLightRef.current.intensity = ZERO_LIGHT_INTENSITY;
                     playerGlowLightRef.current.distance = ZERO_LIGHT_DISTANCE;
                 }
-             }
-             if (sceneRef.current?.fog) {
+            }
+            if (sceneRef.current?.fog) {
                 const fog = sceneRef.current.fog as THREE.Fog;
-                 if (lightDuration > 0) {
+                if (lightDuration > 0) {
                     fog.near = NORMAL_FOG_NEAR;
-                    fog.far = NORMAL_FOG_FAR;
+                    fog.far = THREE.MathUtils.lerp(NORMAL_FOG_NEAR + 2, NORMAL_FOG_FAR, lightRatio); // Fog distance shrinks with light
                     (fog.color as THREE.Color).setHex(NORMAL_FOG_COLOR);
-                 } else {
-                    // Reduce visibility drastically when light is out
+                } else {
+                    // PITCH BLACK: Make fog extremely close and black
                     fog.near = ZERO_LIGHT_FOG_NEAR;
                     fog.far = ZERO_LIGHT_FOG_FAR;
                     (fog.color as THREE.Color).setHex(ZERO_LIGHT_FOG_COLOR);
-                 }
-             }
+                }
+            }
 
 
-            // Animate Torches (Intensity Flicker Only) - Unchanged
-            torchesRef.current.forEach(torchData => {
-                const { light } = torchData;
-                const intensityNoise = (Math.sin(elapsedTime * FLICKER_SPEED + light.id * 0.7) + Math.cos(elapsedTime * FLICKER_SPEED * 0.6 + light.id)) * 0.5;
-                light.intensity = BASE_TORCH_LIGHT_INTENSITY + intensityNoise * FLICKER_INTENSITY_VARIATION;
-            });
+            // Animate Torches removed
 
-             // Animate Interactable Objects (Gentle Bobbing/Rotation/Glow)
+             // Animate Interactable Objects (Gentle Bobbing/Rotation/Glow) - Unchanged
              interactableObjectsRef.current.forEach(obj => {
                  if (obj.mesh.visible) {
                       obj.mesh.rotation.y += delta * 0.5;
                       obj.mesh.position.y = OBJECT_HEIGHT + Math.sin(elapsedTime * 1.5 + obj.id) * 0.1;
-                      // Make emissive intensity pulse slightly
                       const baseIntensity = ORB_SIZES[obj.size].emissiveIntensity;
                       const pulse = (Math.sin(elapsedTime * 2.0 + obj.id * 1.1) + 1) / 2; // 0 to 1
-                      (obj.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = baseIntensity * (0.8 + pulse * 0.4); // Pulse between 80% and 120% base
+                      (obj.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = baseIntensity * (0.8 + pulse * 0.4);
                  }
              });
 
 
-            // Player Rotation - Unchanged
+            // --- Player Movement and Rotation ---
             let rotationChange = 0;
             if (rotateLeft.current) rotationChange += ROTATION_SPEED * delta;
             if (rotateRight.current) rotationChange -= ROTATION_SPEED * delta;
-            playerRotationY.current += rotationChange;
-            playerRef.current.rotation.y = playerRotationY.current;
+            if (Math.abs(rotationChange) > 0.001) {
+                playerRotationY.current += rotationChange;
+                playerRef.current.rotation.y = playerRotationY.current;
+                // console.log("Rotating:", playerRotationY.current); // Debug log
+                controlsRef.current.moveRight(-rotationChange*2);
+            }
 
-            // Player Movement (Forward/Backward/Strafe) - Unchanged logic
+
             const moveDirection = new THREE.Vector3();
             const strafeDirection = new THREE.Vector3();
-            playerRef.current.getWorldDirection(moveDirection).negate();
-            moveDirection.y = 0;
+            playerRef.current.getWorldDirection(moveDirection).negate(); // Get facing direction
+            moveDirection.y = 0; // Ignore vertical component
             moveDirection.normalize();
-            strafeDirection.crossVectors(playerRef.current.up, moveDirection).negate();
+
+            strafeDirection.crossVectors(playerRef.current.up, moveDirection).normalize().negate(); // Calculate right vector for strafing
 
 
             const combinedMove = new THREE.Vector3();
@@ -623,101 +633,127 @@ const Game: React.FC = () => {
             if (moveLeftStrafe.current) combinedMove.sub(strafeDirection);
             if (moveRightStrafe.current) combinedMove.add(strafeDirection);
 
-            let movedThisFrame = false;
-
+            // Normalize if moving diagonally, scale by speed and delta time
             if (combinedMove.lengthSq() > 0) {
                 combinedMove.normalize();
                 const actualMoveSpeed = MOVE_SPEED * delta;
                 const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
                 const currentPosition = playerRef.current.position.clone();
                 const nextPosition = currentPosition.clone().add(moveAmount);
+                // console.log("Attempting move:", moveAmount.toArray().map(n => n.toFixed(2))); // Debug log
 
                  if (isPositionValid(nextPosition)) {
                     playerRef.current.position.copy(nextPosition);
-                    movedThisFrame = true;
                  } else {
+                     // Sliding collision logic (try moving along X or Z axis separately)
                      const moveXComponent = new THREE.Vector3(moveAmount.x, 0, 0);
                      const nextPositionX = currentPosition.clone().add(moveXComponent);
                      const moveZComponent = new THREE.Vector3(0, 0, moveAmount.z);
                      const nextPositionZ = currentPosition.clone().add(moveZComponent);
 
-                     let movedX = false;
                      if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
                          playerRef.current.position.x = nextPositionX.x;
-                         movedThisFrame = true;
-                         movedX = true;
+                         // console.log("Moved X only"); // Debug log
                      }
 
+                     // Need to re-evaluate Z possibility after potential X move
                      const currentPosForZCheck = playerRef.current.position.clone();
                      const nextPositionZAfterX = currentPosForZCheck.clone().add(moveZComponent);
 
                      if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
                           playerRef.current.position.z = nextPositionZAfterX.z;
-                          movedThisFrame = true;
+                          // console.log("Moved Z only (or after X)"); // Debug log
                      }
                  }
             }
+            // --- End Player Movement ---
 
-            // Update discovered tiles and collect light if the player moved
+
+            // Update discovered tiles and collect light if the player moved - Moved distance check done earlier
             if (movedThisFrame) {
                  const playerGridX = Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5);
                  const playerGridZ = Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5);
                  updateDiscovery(playerGridX, playerGridZ);
-                 // Attempt to collect light *after* moving and updating position
-                 collectNearbyLight();
+                 collectNearbyLight(); // Attempt to collect light *after* moving
             }
 
-            // Removed nearby object check logic as interaction is automatic
 
             rendererRef.current.render(sceneRef.current, cameraRef.current);
         };
+        // --- End Animation Loop ---
 
-        frameId = requestAnimationFrame(animate);
+        clock.current.start(); // Ensure clock is running
+        animate(); // Start the animation loop
 
-        // Cleanup - Unchanged
+        console.log("Game setup complete, starting animation loop."); // Debug log
+
+
+        // Cleanup function
         return () => {
-             if (frameId) cancelAnimationFrame(frameId);
+            console.log("Running cleanup function..."); // Debug log
+             if (animationFrameId.current) {
+                cancelAnimationFrame(animationFrameId.current);
+                animationFrameId.current = null;
+                console.log("Cancelled animation frame"); // Debug log
+             }
              cleanupFunctions.current.forEach(cleanup => cleanup());
              cleanupFunctions.current = [];
+             console.log("Executed registered cleanup functions"); // Debug log
 
-            if (currentMount && rendererRef.current?.domElement && currentMount.contains(rendererRef.current.domElement)) {
-                 try { currentMount.removeChild(rendererRef.current.domElement); }
-                 catch (e) { console.warn("Error removing renderer DOM element:", e); }
-            }
-            if (sceneRef.current) {
-                sceneRef.current.traverse((object) => {
-                    if (object instanceof THREE.Mesh) {
-                        object.geometry?.dispose();
-                         if (Array.isArray(object.material)) { object.material.forEach(material => material.dispose()); }
-                         else if (object.material) { object.material.dispose(); }
-                    } else if (object instanceof THREE.Light) { object.dispose(); }
-                });
-                sceneRef.current.fog = null; // Clear fog explicitly
-            }
-             rendererRef.current?.dispose();
-             clock.current.stop();
+            // Explicitly try removing the DOM element again, handling potential errors
+             if (currentMount && rendererRef.current?.domElement && currentMount.contains(rendererRef.current.domElement)) {
+                  try {
+                      currentMount.removeChild(rendererRef.current.domElement);
+                      console.log("Removed renderer DOM element on cleanup"); // Debug log
+                  } catch (e) {
+                      console.warn("Error removing renderer DOM element during cleanup:", e);
+                  }
+             }
 
-             sceneRef.current = undefined;
-             rendererRef.current = undefined;
-             cameraRef.current = undefined;
-             playerRef.current = new THREE.Group();
-             lastPlayerPosition.current.set(0,0,0);
-             dungeonGroupRef.current = new THREE.Group();
-             torchesRef.current = [];
-             interactableObjectsRef.current = [];
-             keysPressedRef.current = {};
-             moveForward.current = false;
-             moveBackward.current = false;
-             moveLeftStrafe.current = false;
-             moveRightStrafe.current = false;
-             rotateLeft.current = false;
-             rotateRight.current = false;
-             // nearbyObjectRef removed
-             setDiscoveredTiles(new Set());
-             setLightDuration(INITIAL_LIGHT_DURATION);
+             // Dispose Three.js resources
+             if (sceneRef.current) {
+                 sceneRef.current.traverse((object) => {
+                     if (object instanceof THREE.Mesh) {
+                         object.geometry?.dispose();
+                          if (Array.isArray(object.material)) {
+                              object.material.forEach(material => material.dispose());
+                          } else if (object.material) {
+                              object.material.dispose();
+                          }
+                     } else if (object instanceof THREE.Light) {
+                         object.dispose();
+                     }
+                 });
+                 sceneRef.current.clear(); // Ensure scene is cleared
+                 console.log("Disposed scene objects"); // Debug log
+             }
+              rendererRef.current?.dispose();
+              console.log("Disposed renderer"); // Debug log
+              clock.current.stop();
+              console.log("Stopped clock"); // Debug log
+
+              // Reset refs to undefined or initial state
+              sceneRef.current = undefined;
+              rendererRef.current = undefined;
+              cameraRef.current = undefined;
+              playerRef.current = new THREE.Group(); // Recreate player group
+              lastPlayerPosition.current.set(0,0,0);
+              dungeonGroupRef.current = new THREE.Group();
+              interactableObjectsRef.current = [];
+              keysPressedRef.current = {};
+              moveForward.current = false;
+              moveBackward.current = false;
+              moveLeftStrafe.current = false;
+              moveRightStrafe.current = false;
+              rotateLeft.current = false;
+              rotateRight.current = false;
+              playerRotationY.current = 0;
+               controlsRef.current?.disconnect();
+               controlsRef.current = null;
+
+              console.log("Cleanup complete."); // Debug log
         };
-    // Dependencies updated: Removed nearbyObjectRef, added collectNearbyLight
-    }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast]);
+    }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast]); // Dependencies
 
 
     if (!gameStarted) {
@@ -729,20 +765,21 @@ const Game: React.FC = () => {
 
     return (
         <div ref={mountRef} className="w-full h-full relative bg-black">
-             <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />
-             <Minimap
-                 dungeon={dungeonData}
-                 playerX={playerGridX}
-                 playerZ={playerGridZ}
-                 viewRadius={MINIMAP_VIEW_RADIUS}
-                 tileSize={TILE_SIZE}
-                 // Pass the *entire* list including used objects, Minimap will handle filtering based on visibility if needed
-                 // or filter here before passing
-                 interactableObjects={interactableObjectsRef.current.filter(obj => !obj.used)}
-                 discoveredTiles={discoveredTiles}
-                 getTileKey={getTileKey}
-             />
-             {/* Interaction hint removed */}
+             {gameStarted && ( // Only render HUD and Minimap if game has started
+                 <>
+                    <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />
+                    <Minimap
+                        dungeon={dungeonData}
+                        playerX={playerGridX}
+                        playerZ={playerGridZ}
+                        viewRadius={MINIMAP_VIEW_RADIUS}
+                        tileSize={TILE_SIZE}
+                        interactableObjects={interactableObjectsRef.current.filter(obj => !obj.used)}
+                        discoveredTiles={discoveredTiles}
+                        getTileKey={getTileKey}
+                    />
+                </>
+            )}
         </div>
     );
 };

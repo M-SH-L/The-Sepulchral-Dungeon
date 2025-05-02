@@ -1,5 +1,5 @@
-
 import Game from '@/components/game/game';
+// LevelSelect import removed
 
 export default function Home() {
   return (
