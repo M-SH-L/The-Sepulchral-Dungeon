@@ -51,10 +51,10 @@ const OBJECT_PROBABILITY = 0.08; // Chance for objects on floor tiles
 const OBJECT_HEIGHT_OFFSET = -0.2; // Place orbs slightly below center line of wall
 
 const PLAYER_GLOW_COLOR = 0xffffff;
-const MIN_PLAYER_GLOW_INTENSITY = 0.5;
-const MAX_PLAYER_GLOW_INTENSITY = 3.0; // Increased max intensity for better visibility
-const MIN_PLAYER_GLOW_DISTANCE = 3.0; // Increased min distance
-const MAX_PLAYER_GLOW_DISTANCE = 10.0; // Increased max distance for wider light spread
+const MIN_PLAYER_GLOW_INTENSITY = 0; // Intensity should be zero when light is out
+const MAX_PLAYER_GLOW_INTENSITY = 4.0; // Increased max intensity
+const MIN_PLAYER_GLOW_DISTANCE = 0; // Distance should be zero when light is out
+const MAX_PLAYER_GLOW_DISTANCE = 15.0; // Significantly increased max distance for wider light spread
 const MINIMAP_VIEW_RADIUS = 5;
 const PLAYER_DISCOVERY_RADIUS = 1;
 const INITIAL_LIGHT_DURATION = 60; // Starting light amount
@@ -70,7 +70,7 @@ const ZERO_LIGHT_FOG_COLOR = 0x000000; // Pure black fog when light is out
 
 // --- Normal Light State Constants ---
 const NORMAL_FOG_NEAR = 1;
-const NORMAL_FOG_FAR = 12; // Slightly increased normal fog distance
+const NORMAL_FOG_FAR = 18; // Increased normal fog distance to match max light distance somewhat
 const NORMAL_FOG_COLOR = 0x100500; // Dark sepia/brown fog color
 
 
@@ -131,7 +131,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartGame }) => {
                 </CardHeader>
                 <CardContent className="p-8 space-y-6 text-center">
                     <p className="text-foreground/90 leading-relaxed">
-                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and glance left/right with <span className="font-semibold text-primary-foreground/80">[Arrow Keys]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness.
+                        Descend into the dust-choked labyrinth. Your light fades as you move... Navigate using <span className="font-semibold text-primary-foreground/80">[W/A/S/D]</span> and glance left/right with <span className="font-semibold text-primary-foreground/80">[Arrow Keys]</span>. Collect floating light artifacts automatically by approaching them to stave off the encroaching darkness. Run out of light, and the darkness takes you.
                     </p>
                     <Button
                         onClick={onStartGame}
@@ -186,6 +186,7 @@ const Game: React.FC = () => {
     const [lightDuration, setLightDuration] = useState(INITIAL_LIGHT_DURATION);
     const lastPlayerPosition = useRef<THREE.Vector3>(new THREE.Vector3());
     const animationFrameId = useRef<number | null>(null); // Use ref for animation frame ID
+    const [isGameOver, setIsGameOver] = useState(false); // Game over state
 
     const dungeonData = React.useMemo(() => generateDungeon(DUNGEON_SIZE_WIDTH, DUNGEON_SIZE_HEIGHT, 15, 5, 9), []);
 
@@ -212,7 +213,8 @@ const Game: React.FC = () => {
 
     // Automatic Light Collection Logic
     const collectNearbyLight = useCallback(() => {
-        if (!playerRef.current) return; // Ensure player ref exists
+        if (!playerRef.current || isGameOver) return; // Don't collect if game over
+
         const playerPos = playerRef.current.position;
 
         interactableObjectsRef.current.forEach((obj) => {
@@ -220,7 +222,12 @@ const Game: React.FC = () => {
                 const distanceSq = playerPos.distanceToSquared(obj.mesh.position);
                  if (distanceSq < COLLECTION_DISTANCE * COLLECTION_DISTANCE) {
                      // Increase light duration
-                     setLightDuration(currentDuration => Math.min(MAX_LIGHT_DURATION, currentDuration + obj.lightValue));
+                     setLightDuration(currentDuration => {
+                        const newDuration = Math.min(MAX_LIGHT_DURATION, currentDuration + obj.lightValue);
+                        console.log(`Collected ${obj.size} orb. Light: ${currentDuration} -> ${newDuration}`); // Debug log
+                        return newDuration;
+                     });
+
 
                      // Mark object as used and hide it
                      obj.used = true;
@@ -238,7 +245,7 @@ const Game: React.FC = () => {
             }
         });
 
-    }, [toast]);
+    }, [toast, isGameOver]);
 
 
     // Collision Detection
@@ -259,11 +266,45 @@ const Game: React.FC = () => {
         return true;
     }, [dungeonData]);
 
+    // Game Over Function
+    const handleGameOver = useCallback(() => {
+        console.log("Game Over triggered!");
+        setIsGameOver(true);
+        // Stop movement refs
+        moveForward.current = false;
+        moveBackward.current = false;
+        moveLeftStrafe.current = false;
+        moveRightStrafe.current = false;
+        rotateLeft.current = false;
+        rotateRight.current = false;
+        keysPressedRef.current = {}; // Clear all keys
+
+        toast({
+            title: "Consumed by Darkness",
+            description: "Your light has faded completely. Press Enter to return to the start.",
+            variant: "destructive",
+            duration: Infinity, // Keep showing until dismissed or restart
+        });
+
+        // Add listener for Enter key to restart (go back to intro)
+        const handleRestart = (event: KeyboardEvent) => {
+             if (event.key === 'Enter') {
+                window.removeEventListener('keydown', handleRestart);
+                setGameStarted(false); // Go back to intro screen
+                setIsGameOver(false); // Reset game over state for next game
+             }
+        };
+        window.addEventListener('keydown', handleRestart);
+        cleanupFunctions.current.push(() => window.removeEventListener('keydown', handleRestart));
+
+    }, [toast]);
+
     // Start Game Function
     const startGame = useCallback(() => {
         console.log("Starting game..."); // Debug log
+        setIsGameOver(false); // Reset game over state
         setGameStarted(true);
-        // Reset state if needed (redundant if cleanup is working, but safe)
+        // Reset state if needed
         setLightDuration(INITIAL_LIGHT_DURATION);
         setDiscoveredTiles(new Set());
         playerRotationY.current = 0;
@@ -274,7 +315,25 @@ const Game: React.FC = () => {
         moveRightStrafe.current = false;
         rotateLeft.current = false;
         rotateRight.current = false;
-    }, []);
+        // Ensure last player position is reset for accurate decay calculation
+        if (playerRef.current) {
+             lastPlayerPosition.current.copy(playerRef.current.position);
+        } else {
+            // Estimate start position if playerRef not ready (should be rare)
+            let startX = Math.floor(DUNGEON_SIZE_WIDTH / 2);
+            let startZ = Math.floor(DUNGEON_SIZE_HEIGHT / 2);
+            // Find first floor/corridor
+            outerLoop: for (let z = 1; z < dungeonData.length - 1; z++) {
+                for (let x = 1; x < dungeonData[z].length - 1; x++) {
+                     if (dungeonData[z][x] !== DungeonTile.Wall) {
+                         startX = x; startZ = z; break outerLoop;
+                     }
+                }
+            }
+            lastPlayerPosition.current.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
+        }
+
+    }, [dungeonData]);
 
 
     // Initial Setup Effect
@@ -313,6 +372,7 @@ const Game: React.FC = () => {
         rotateLeft.current = false;
         rotateRight.current = false;
         playerRotationY.current = 0;
+        setIsGameOver(false); // Ensure game over is reset on setup
 
 
         const currentMount = mountRef.current;
@@ -335,20 +395,17 @@ const Game: React.FC = () => {
         renderer.shadowMap.enabled = false; // Shadows disabled for performance and simpler lighting
         renderer.toneMapping = THREE.NoToneMapping; // Use basic tone mapping
 
-        // Set initial camera look direction (important!)
-        // Correct initial look target - look straight ahead from eye level
-        const initialLookAtTarget = new THREE.Vector3(playerRef.current.position.x, CAMERA_EYE_LEVEL, playerRef.current.position.z - 1);
-        camera.lookAt(initialLookAtTarget);
-        camera.up.set(0, 1, 0); // Ensure camera is upright
-
-
-        // Lighting Setup - Only player glow light
 
         // Player Setup
         const player = playerRef.current;
         player.position.y = 0; // Place player group at ground level
         player.add(camera); // Add camera to the player group
         scene.add(player);
+
+        // Set initial camera look direction (important!)
+        const initialLookAtTarget = new THREE.Vector3(player.position.x, CAMERA_EYE_LEVEL, player.position.z - 1);
+        camera.lookAt(initialLookAtTarget);
+        camera.up.set(0, 1, 0); // Ensure camera is upright
 
         // Player Glow Light
         const playerGlowLight = new THREE.PointLight(PLAYER_GLOW_COLOR, MAX_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_DISTANCE);
@@ -381,7 +438,7 @@ const Game: React.FC = () => {
                }
           }
          player.position.set(startX * TILE_SIZE, 0, startZ * TILE_SIZE);
-         lastPlayerPosition.current.copy(player.position);
+         lastPlayerPosition.current.copy(player.position); // Initialize last position correctly
          playerRotationY.current = 0; // Reset rotation
          player.rotation.y = 0; // Apply reset rotation
          updateDiscovery(startX, startZ);
@@ -392,9 +449,11 @@ const Game: React.FC = () => {
         const floorGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         const ceilingGeometry = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
         // Darker materials as primary light is player glow
-        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, metalness: 0.1 }); // Darker brown
-        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, side: THREE.DoubleSide, roughness: 1.0 }); // Darker floor
-        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, side: THREE.DoubleSide, roughness: 1.0 }); // Darker ceiling
+        // Ensure materials are not emissive unless intended (like orbs)
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9, metalness: 0.1, emissive: 0x000000 }); // Darker brown, no emissive
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 }); // Darker floor, no emissive
+        const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, side: THREE.DoubleSide, roughness: 1.0, emissive: 0x000000 }); // Darker ceiling, no emissive
+
 
         const dungeonGroup = dungeonGroupRef.current;
         dungeonGroup.clear();
@@ -409,8 +468,8 @@ const Game: React.FC = () => {
             orbGeometries[size] = new THREE.IcosahedronGeometry(props.scale, 1);
             orbMaterials[size] = new THREE.MeshStandardMaterial({
                 color: props.color,
-                emissive: props.color,
-                emissiveIntensity: props.emissiveIntensity,
+                emissive: props.color, // Orbs should be emissive
+                emissiveIntensity: props.emissiveIntensity, // Controlled emission
                 roughness: 0.3,
                 metalness: 0.1
             });
@@ -485,7 +544,9 @@ const Game: React.FC = () => {
                     dungeonGroup.add(ceiling);
 
                     // Place interactable light objects (orbs) *on floors/corridors*
-                    if (tile === DungeonTile.Floor && Math.random() < OBJECT_PROBABILITY) {
+                     // Increase probability slightly for corridors
+                     const corridorProbabilityBoost = tile === DungeonTile.Corridor ? 1.5 : 1.0;
+                     if (Math.random() < OBJECT_PROBABILITY * corridorProbabilityBoost) {
                         const orbSize = getRandomOrbSize();
                         const sizeProps = ORB_SIZES[orbSize];
                         const objectGeometry = orbGeometries[orbSize];
@@ -543,7 +604,10 @@ const Game: React.FC = () => {
 
         // Keyboard controls
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (!gameStarted) return; // Prevent controls before game starts
+             // Allow Enter for game over restart, but block other controls if game over
+             if (isGameOver && event.key !== 'Enter') return;
+             if (!gameStarted) return; // Prevent controls before game starts
+
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = true;
              switch (key) {
@@ -556,7 +620,7 @@ const Game: React.FC = () => {
             }
         };
         const handleKeyUp = (event: KeyboardEvent) => {
-             if (!gameStarted) return;
+             if (!gameStarted || isGameOver) return; // Block key up if game over
             const key = event.key.toLowerCase();
             keysPressedRef.current[key] = false;
              switch (key) {
@@ -592,42 +656,43 @@ const Game: React.FC = () => {
             const elapsedTime = clock.current.getElapsedTime();
 
             // --- Light Decay Logic ---
-            const currentPosition = playerRef.current.position;
-            const distanceMoved = lastPlayerPosition.current.distanceTo(currentPosition);
-            let movedThisFrame = distanceMoved > 0.001; // Use a small threshold
+            let movedThisFrame = false; // Track if movement happened *this frame*
+            if (!isGameOver) { // Only process movement/decay if game is not over
+                const currentPosition = playerRef.current.position;
+                const distanceMoved = lastPlayerPosition.current.distanceTo(currentPosition);
+                movedThisFrame = distanceMoved > 0.001; // Use a small threshold
 
-            if (movedThisFrame && lightDuration > 0) { // Only decay if light is present
-                 setLightDuration(prevDuration => {
-                     const newDuration = Math.max(0, prevDuration - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED);
-                     // Game Over check moved after update
-                     if (newDuration <= 0) {
-                         console.log("Light reached zero! Game Over.");
-                         // Handle game over (e.g., show message, stop interaction)
-                         // For now, just log it and prevent further decay/updates
-                         // setGameStarted(false); // Example: stop game loop
-                         return 0; // Ensure it stays at 0
-                     }
-                     return newDuration;
-                 });
-                lastPlayerPosition.current.copy(currentPosition);
-            } else if (lightDuration <= 0) {
-                 // If light is already zero, ensure no negative values and update last position
-                 lastPlayerPosition.current.copy(currentPosition);
-                 // Game Over logic could be more elaborate here if needed
-            } else {
-                // If standing still, update last position to avoid large jumps later
-                lastPlayerPosition.current.copy(currentPosition);
+                if (movedThisFrame && lightDuration > 0) { // Only decay if light is present and moving
+                    setLightDuration(prevDuration => {
+                        const decayAmount = distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED;
+                        const newDuration = Math.max(0, prevDuration - decayAmount);
+                        console.log(`Moved: ${distanceMoved.toFixed(3)}, Decayed: ${decayAmount.toFixed(3)}, Light: ${prevDuration.toFixed(2)} -> ${newDuration.toFixed(2)}`); // Debug log
+
+                        if (newDuration <= 0 && prevDuration > 0) { // Check if light just ran out
+                            handleGameOver(); // Trigger game over
+                        }
+                        return newDuration;
+                    });
+                    lastPlayerPosition.current.copy(currentPosition); // Update last pos only if moved
+                } else if (lightDuration <= 0 && !isGameOver) {
+                    // If light is already zero, ensure game over is triggered if not already
+                    handleGameOver();
+                    lastPlayerPosition.current.copy(currentPosition);
+                } else {
+                    // If standing still, or light is already zero and game is over, just update last position
+                    lastPlayerPosition.current.copy(currentPosition);
+                }
             }
             // --- End Light Decay Logic ---
 
             // Update Player Glow AND Scene Fog based on remaining light duration - Pitch black logic added
             const lightRatio = Math.max(0, Math.min(1, lightDuration / MAX_LIGHT_DURATION));
             if (playerGlowLightRef.current) {
-                if (lightDuration > 0) {
-                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(ZERO_LIGHT_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
-                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(ZERO_LIGHT_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
+                if (lightDuration > 0 && !isGameOver) { // Light only on if duration > 0 and not game over
+                    playerGlowLightRef.current.intensity = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_INTENSITY, MAX_PLAYER_GLOW_INTENSITY, lightRatio);
+                    playerGlowLightRef.current.distance = THREE.MathUtils.lerp(MIN_PLAYER_GLOW_DISTANCE, MAX_PLAYER_GLOW_DISTANCE, lightRatio);
                 } else {
-                    // PITCH BLACK: Ensure the light is completely off
+                    // PITCH BLACK or Game Over: Ensure the light is completely off
                     playerGlowLightRef.current.intensity = ZERO_LIGHT_INTENSITY;
                     playerGlowLightRef.current.distance = ZERO_LIGHT_DISTANCE;
                 }
@@ -635,13 +700,15 @@ const Game: React.FC = () => {
             if (sceneRef.current?.fog) {
                 const fog = sceneRef.current.fog as THREE.Fog;
                 const fogColor = new THREE.Color(); // Temporary color object
-                if (lightDuration > 0) {
+                if (lightDuration > 0 && !isGameOver) {
                     fog.near = NORMAL_FOG_NEAR;
-                    // Fog distance shrinks significantly as light fades, smoothly interpolating to the pitch black value
-                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, lightRatio);
+                     // Fog distance shrinks significantly as light fades, smoothly interpolating to the pitch black value
+                     // Adjust interpolation for more dramatic effect - maybe non-linear?
+                    const easedRatio = lightRatio * lightRatio; // Example: quadratic easing (faster fade near zero)
+                    fog.far = THREE.MathUtils.lerp(ZERO_LIGHT_FOG_FAR, NORMAL_FOG_FAR, easedRatio);
                     fogColor.setHex(NORMAL_FOG_COLOR);
                 } else {
-                    // PITCH BLACK: Make fog extremely close and black
+                    // PITCH BLACK or Game Over: Make fog extremely close and black
                     fog.near = ZERO_LIGHT_FOG_NEAR;
                     fog.far = ZERO_LIGHT_FOG_FAR;
                     fogColor.setHex(ZERO_LIGHT_FOG_COLOR);
@@ -659,8 +726,8 @@ const Game: React.FC = () => {
 
              // Animate Interactable Objects (Gentle Glow Pulse)
              interactableObjectsRef.current.forEach(obj => {
-                // Only animate visible orbs AND turn off emissive when light is zero
-                 if (obj.mesh.visible && lightDuration > 0) {
+                // Only animate visible orbs AND turn off emissive when player light is out or game over
+                 if (obj.mesh.visible && lightDuration > 0 && !isGameOver) {
                     // Pulsating emissive intensity
                     const baseIntensity = ORB_SIZES[obj.size].emissiveIntensity;
                     const pulse = (Math.sin(elapsedTime * 2.0 + obj.id * 1.1) + 1) / 2; // 0 to 1 sine wave
@@ -668,8 +735,8 @@ const Game: React.FC = () => {
                     if(material?.emissiveIntensity !== undefined) {
                          material.emissiveIntensity = baseIntensity * (0.8 + pulse * 0.4); // Pulse between 80% and 120% of base
                     }
-                 } else if (obj.mesh.visible && lightDuration <= 0) {
-                     // Turn off emissive completely when player light is out
+                 } else if (obj.mesh.visible) { // Keep visible but turn off emissive if light is out/game over
+                     // Turn off emissive completely when player light is out or game over
                      const material = obj.mesh.material as THREE.MeshStandardMaterial;
                      if(material?.emissiveIntensity !== undefined) {
                           material.emissiveIntensity = 0;
@@ -678,86 +745,91 @@ const Game: React.FC = () => {
              });
 
 
-            // --- Player Movement and Rotation ---
-            let rotationChange = 0;
-            if (rotateLeft.current) rotationChange += ROTATION_SPEED * delta;
-            if (rotateRight.current) rotationChange -= ROTATION_SPEED * delta;
-            if (Math.abs(rotationChange) > 0.001) {
-                playerRotationY.current += rotationChange;
-                playerRef.current.rotation.y = playerRotationY.current;
+            // --- Player Movement and Rotation (Only if game not over) ---
+             if (!isGameOver) {
+                let rotationChange = 0;
+                if (rotateLeft.current) rotationChange += ROTATION_SPEED * delta;
+                if (rotateRight.current) rotationChange -= ROTATION_SPEED * delta;
+                if (Math.abs(rotationChange) > 0.001) {
+                    playerRotationY.current += rotationChange;
+                    playerRef.current.rotation.y = playerRotationY.current;
 
-                 // Update camera lookAt target based on player rotation AND eye level
-                const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
-                lookDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRotationY.current); // Apply current Y rotation
-                lookDirection.normalize();
+                    // Update camera lookAt target based on player rotation AND eye level
+                    const lookDirection = new THREE.Vector3(0, 0, -1); // Base forward direction
+                    lookDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRotationY.current); // Apply current Y rotation
+                    lookDirection.normalize();
 
-                // Calculate the target position for the camera to look at
-                const lookAtTarget = new THREE.Vector3().copy(playerRef.current.position); // Start at player's ground position
-                // Ensure camera looks straight ahead from its eye level position within the player group
-                lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead
-                lookAtTarget.y = CAMERA_EYE_LEVEL; // Set the look-at height to the camera's eye level
+                    // Calculate the target position for the camera to look at
+                    const lookAtTarget = new THREE.Vector3(); // Start at player's local origin (0,0,0 relative to group)
+                    lookAtTarget.add(lookDirection.multiplyScalar(10)); // Look 10 units ahead in the rotated direction
+                    lookAtTarget.y = CAMERA_EYE_LEVEL; // Keep looking at eye level
 
-                cameraRef.current.lookAt(lookAtTarget);
-                cameraRef.current.up.set(0, 1, 0); // Ensure the camera remains upright
-            }
+                    // Transform the local lookAtTarget to world space based on player's position
+                    const worldLookAtTarget = playerRef.current.localToWorld(lookAtTarget.clone());
 
-
-            const moveDirection = new THREE.Vector3();
-            const strafeDirection = new THREE.Vector3();
-            // Get forward direction based on the player's current Y rotation
-            moveDirection.set(Math.sin(playerRotationY.current), 0, Math.cos(playerRotationY.current)).negate(); // Forward is -Z initially, rotate around Y
-            moveDirection.normalize();
-
-            // Calculate right vector for strafing based on the forward direction
-            strafeDirection.crossVectors(playerRef.current.up, moveDirection).normalize(); // Right vector is up x forward
+                    // The camera itself is positioned at eye level within the player group
+                    // So we make it look at the calculated world target
+                    cameraRef.current.lookAt(worldLookAtTarget);
+                    cameraRef.current.up.set(0, 1, 0); // Ensure the camera remains upright
+                }
 
 
-            const combinedMove = new THREE.Vector3();
-            if (moveForward.current) combinedMove.add(moveDirection);
-            if (moveBackward.current) combinedMove.sub(moveDirection);
-            if (moveLeftStrafe.current) combinedMove.sub(strafeDirection); // Strafe left uses negative right vector
-            if (moveRightStrafe.current) combinedMove.add(strafeDirection); // Strafe right uses positive right vector
+                const moveDirection = new THREE.Vector3();
+                const strafeDirection = new THREE.Vector3();
+                // Get forward direction based on the player's current Y rotation
+                moveDirection.set(Math.sin(playerRotationY.current), 0, Math.cos(playerRotationY.current)).negate(); // Forward is -Z initially, rotate around Y
+                moveDirection.normalize();
 
-            // Normalize if moving diagonally, scale by speed and delta time
-            if (combinedMove.lengthSq() > 0.0001) { // Use a small threshold
-                const actualMoveSpeed = MOVE_SPEED * delta;
-                const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
-                const currentPosBeforeMove = playerRef.current.position.clone();
-                const nextPosition = currentPosBeforeMove.clone().add(moveAmount);
+                // Calculate right vector for strafing based on the forward direction
+                strafeDirection.crossVectors(playerRef.current.up, moveDirection).normalize(); // Right vector is up x forward
 
-                 if (isPositionValid(nextPosition)) {
-                    playerRef.current.position.copy(nextPosition);
-                 } else {
-                     // Sliding collision logic (try moving along X or Z axis separately)
-                     const moveXComponent = new THREE.Vector3(moveAmount.x, 0, 0);
-                     const nextPositionX = currentPosBeforeMove.clone().add(moveXComponent);
-                     const moveZComponent = new THREE.Vector3(0, 0, moveAmount.z);
-                     const nextPositionZ = currentPosBeforeMove.clone().add(moveZComponent);
 
-                     let movedX = false;
-                     let movedZ = false;
+                const combinedMove = new THREE.Vector3();
+                if (moveForward.current) combinedMove.add(moveDirection);
+                if (moveBackward.current) combinedMove.sub(moveDirection);
+                if (moveLeftStrafe.current) combinedMove.sub(strafeDirection); // Strafe left uses negative right vector
+                if (moveRightStrafe.current) combinedMove.add(strafeDirection); // Strafe right uses positive right vector
 
-                     if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
-                         playerRef.current.position.x = nextPositionX.x;
-                         movedX = true;
-                     }
+                // Normalize if moving diagonally, scale by speed and delta time
+                if (combinedMove.lengthSq() > 0.0001) { // Use a small threshold
+                    const actualMoveSpeed = MOVE_SPEED * delta;
+                    const moveAmount = combinedMove.multiplyScalar(actualMoveSpeed);
+                    const currentPosBeforeMove = playerRef.current.position.clone();
+                    const nextPosition = currentPosBeforeMove.clone().add(moveAmount);
 
-                     // Need to re-evaluate Z possibility after potential X move
-                     const currentPosForZCheck = playerRef.current.position.clone(); // Get position potentially updated by X move
-                     const nextPositionZAfterX = currentPosForZCheck.clone().add(moveZComponent);
+                    if (isPositionValid(nextPosition)) {
+                        playerRef.current.position.copy(nextPosition);
+                    } else {
+                        // Sliding collision logic (try moving along X or Z axis separately)
+                        const moveXComponent = new THREE.Vector3(moveAmount.x, 0, 0);
+                        const nextPositionX = currentPosBeforeMove.clone().add(moveXComponent);
+                        const moveZComponent = new THREE.Vector3(0, 0, moveAmount.z);
+                        const nextPositionZ = currentPosBeforeMove.clone().add(moveZComponent);
 
-                     if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
-                          playerRef.current.position.z = nextPositionZAfterX.z;
-                          movedZ = true;
-                     }
-                 }
-            }
+                        let movedX = false;
+                        let movedZ = false;
+
+                        if (moveXComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionX)) {
+                            playerRef.current.position.x = nextPositionX.x;
+                            movedX = true;
+                        }
+
+                        // Need to re-evaluate Z possibility after potential X move
+                        const currentPosForZCheck = playerRef.current.position.clone(); // Get position potentially updated by X move
+                        const nextPositionZAfterX = currentPosForZCheck.clone().add(moveZComponent);
+
+                        if (moveZComponent.lengthSq() > 0.0001 && isPositionValid(nextPositionZAfterX)) {
+                            playerRef.current.position.z = nextPositionZAfterX.z;
+                            movedZ = true;
+                        }
+                    }
+                }
+            } // End of !isGameOver block for movement
             // --- End Player Movement ---
 
 
-            // Update discovered tiles and collect light if the player moved
-            // This check is now independent of lightDuration
-            if (movedThisFrame) {
+            // Update discovered tiles and collect light if the player moved (and not game over)
+            if (movedThisFrame && !isGameOver) {
                  const playerGridX = Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5);
                  const playerGridZ = Math.floor(playerRef.current.position.z / TILE_SIZE + 0.5);
                  updateDiscovery(playerGridX, playerGridZ);
@@ -835,10 +907,11 @@ const Game: React.FC = () => {
               rotateLeft.current = false;
               rotateRight.current = false;
               playerRotationY.current = 0;
+              setIsGameOver(false); // Ensure game over state is reset on full cleanup
 
               console.log("Cleanup complete."); // Debug log
         };
-    }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast]); // Dependencies
+    }, [gameStarted, dungeonData, isPositionValid, collectNearbyLight, updateDiscovery, toast, handleGameOver]); // Dependencies
 
 
     const playerGridX = playerRef.current ? Math.floor(playerRef.current.position.x / TILE_SIZE + 0.5) : 0;
@@ -848,8 +921,8 @@ const Game: React.FC = () => {
         <div ref={mountRef} className="w-full h-full relative bg-black">
              {gameStarted && ( // Only render HUD and Minimap if game has started
                  <>
-                    <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />
-                    <Minimap
+                     {!isGameOver && <GameHUD lightDuration={lightDuration} maxLightDuration={MAX_LIGHT_DURATION} />}
+                     <Minimap
                         dungeon={dungeonData}
                         playerX={playerGridX}
                         playerZ={playerGridZ}
@@ -859,12 +932,22 @@ const Game: React.FC = () => {
                         interactableObjects={interactableObjectsRef.current.filter(obj => !obj.used && obj.mesh.visible)}
                         discoveredTiles={discoveredTiles}
                         getTileKey={getTileKey}
+                        isPlayerLightOut={lightDuration <= 0 || isGameOver} // Pass light status to minimap
                     />
                 </>
             )}
             {!gameStarted && (
                 <IntroScreen onStartGame={startGame} />
             )}
+             {/* Optionally show a game over message overlay directly */}
+             {/* {isGameOver && (
+                <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-20 text-white text-center">
+                    <div>
+                        <h2 className="text-4xl font-bold mb-4 text-destructive">Consumed by Darkness</h2>
+                        <p className="text-lg">Press Enter to Return to the Start</p>
+                    </div>
+                </div>
+             )} */}
         </div>
     );
 };

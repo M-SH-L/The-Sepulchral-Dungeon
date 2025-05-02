@@ -23,6 +23,7 @@ interface MinimapProps {
     interactableObjects: InteractableObjectData[]; // List might include used/hidden objects
     discoveredTiles: Set<string>; // Set of discovered tile keys ('x,z')
     getTileKey: (x: number, z: number) => string; // Function to generate tile keys
+    isPlayerLightOut: boolean; // New prop to indicate if player light is zero
 }
 
 const Minimap: React.FC<MinimapProps> = ({
@@ -34,6 +35,7 @@ const Minimap: React.FC<MinimapProps> = ({
     interactableObjects, // Might contain used objects now
     discoveredTiles,
     getTileKey,
+    isPlayerLightOut, // Use the new prop
 }) => {
     const mapSize = viewRadius * 2 + 1;
     // Represents the tile type or 'P' (Player), 'Os', 'Om', 'Ol' (Object sizes), 'U' (Undiscovered)
@@ -55,6 +57,7 @@ const Minimap: React.FC<MinimapProps> = ({
                     minimapGrid[y][x] = baseTile; // Assign the base tile type first
 
                     // Check for *visible and unused* interactable objects in this tile
+                    // Dim orbs if player light is out
                     const objectsInTile = interactableObjects.filter(obj => {
                         // Ensure object is not used and its mesh is visible
                         if (obj.used || !obj.mesh.visible) return false;
@@ -91,15 +94,22 @@ const Minimap: React.FC<MinimapProps> = ({
 
     // Determine the Tailwind class for each tile type
     const getTileClass = (tile: MinimapTileContent): string => {
+        const orbBaseClass = 'shadow-inner shadow-black/30';
+        const orbPulseClass = !isPlayerLightOut ? 'animate-pulse' : ''; // Only pulse if light is on
+        const orbOpacityClass = isPlayerLightOut ? 'opacity-50' : ''; // Dim orbs if light is out
+
         switch (tile) {
             case DungeonTile.Floor: return 'bg-secondary/60 hover:bg-secondary/80';
             case DungeonTile.Corridor: return 'bg-muted/60 hover:bg-muted/80';
             case DungeonTile.Wall: return 'bg-primary/70 hover:bg-primary/90';
-            case 'P': return 'bg-green-500 border border-green-700 shadow-inner shadow-black/30 animate-pulse';
-            // Update orb colors for better distinction
-            case 'Os': return 'bg-yellow-200 border border-yellow-400 shadow-inner shadow-black/30 animate-pulse'; // Lighter Yellow
-            case 'Om': return 'bg-yellow-400 border border-yellow-600 shadow-inner shadow-black/30 animate-pulse'; // Mid Yellow
-            case 'Ol': return 'bg-orange-400 border border-orange-600 shadow-inner shadow-black/30 animate-pulse'; // Orange for Large
+            case 'P': return cn(
+                'border border-green-700 shadow-inner shadow-black/30',
+                 isPlayerLightOut ? 'bg-green-900 opacity-60' : 'bg-green-500 animate-pulse' // Dim player if light out
+                 );
+            // Update orb colors for better distinction and handle light out state
+            case 'Os': return cn(orbBaseClass, orbPulseClass, orbOpacityClass, 'bg-yellow-200 border border-yellow-400'); // Lighter Yellow
+            case 'Om': return cn(orbBaseClass, orbPulseClass, orbOpacityClass, 'bg-yellow-400 border border-yellow-600'); // Mid Yellow
+            case 'Ol': return cn(orbBaseClass, orbPulseClass, orbOpacityClass, 'bg-orange-400 border border-orange-600'); // Orange for Large
             case 'U': return 'bg-black/50'; // Undiscovered
             default: return 'bg-black';
         }
@@ -109,10 +119,10 @@ const Minimap: React.FC<MinimapProps> = ({
          const worldX = playerX - viewRadius + x;
          const worldZ = playerZ - viewRadius + y;
          switch (tile) {
-             case 'P': return `Player at (${playerX}, ${playerZ})`;
-             case 'Os': return `Small Light Source at (${worldX}, ${worldZ})`;
-             case 'Om': return `Medium Light Source at (${worldX}, ${worldZ})`;
-             case 'Ol': return `Large Light Source at (${worldX}, ${worldZ})`;
+             case 'P': return `Player at (${playerX}, ${playerZ})${isPlayerLightOut ? ' (Light Out)' : ''}`;
+             case 'Os': return `Small Light Source at (${worldX}, ${worldZ})${isPlayerLightOut ? ' (Dimmed)' : ''}`;
+             case 'Om': return `Medium Light Source at (${worldX}, ${worldZ})${isPlayerLightOut ? ' (Dimmed)' : ''}`;
+             case 'Ol': return `Large Light Source at (${worldX}, ${worldZ})${isPlayerLightOut ? ' (Dimmed)' : ''}`;
              case 'U': return 'Undiscovered';
              case DungeonTile.Floor: return `Floor at (${worldX}, ${worldZ})`;
              case DungeonTile.Corridor: return `Corridor at (${worldX}, ${worldZ})`;
