@@ -59,4 +59,3 @@ const LightMeter: React.FC<LightMeterProps> = ({
 };
 
 export default LightMeter;
-```
