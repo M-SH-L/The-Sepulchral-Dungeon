@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 
+import { cn } from '@/lib/utils';
 import { generateDungeon, DungeonTile } from './dungeon-generator';
 import ControlsDisplay from './controls-display';
 import LightMeter from './light-meter';
@@ -128,12 +129,17 @@ function Game() {
     // State for game logic
     const [dungeon, setDungeon] = useState<DungeonTile[][]>([]);
     const [interactableObjects, setInteractableObjects] = useState<InteractableObjectData[]>([]);
-    const [playerPosition, setPlayerPosition] = useState<THREE.Vector3>(new THREE.Vector3(0, PLAYER_HEIGHT / 2, 0)); // Initial position centered
+    const playerPositionRef = useRef<THREE.Vector3>(new THREE.Vector3(0, PLAYER_HEIGHT / 2, 0));
     const playerRotationY = useRef(0); // Player's current rotation around Y axis
-    const [lightDuration, setLightDuration] = useState(MAX_LIGHT_DURATION);
+    const lightDurationRef = useRef(MAX_LIGHT_DURATION);
+    const [lightDurationHud, setLightDurationHud] = useState(MAX_LIGHT_DURATION);
+    const isGameOverRef = useRef(false);
     const [isGameOver, setIsGameOver] = useState(false);
+    const showIntroRef = useRef(true);
     const [showIntro, setShowIntro] = useState(true); // Show intro screen initially
     const { toast } = useToast();
+    const toastRef = useRef(toast);
+    toastRef.current = toast;
 
     // Movement states using refs to avoid re-renders in animation loop
     const moveForward = useRef(false);
@@ -143,6 +149,10 @@ function Game() {
     const rotateLeft = useRef(false);
     const rotateRight = useRef(false);
 
+    // Refs for animation loop (avoid stale closures)
+    const interactableObjectsRef = useRef<InteractableObjectData[]>([]);
+    const dungeonRef = useRef<DungeonTile[][]>([]);
+
     // Minimap related state
     const [discoveredTiles, setDiscoveredTiles] = useState<Set<string>>(new Set());
     const [playerGridPos, setPlayerGridPos] = useState({ x: 0, z: 0 });
@@ -150,40 +160,13 @@ function Game() {
     // Callback to start the game
     const startGame = useCallback(() => {
         setShowIntro(false);
-        // Initialize or reset game state here if needed
-        setLightDuration(MAX_LIGHT_DURATION);
+        showIntroRef.current = false;
+        lightDurationRef.current = MAX_LIGHT_DURATION;
+        setLightDurationHud(MAX_LIGHT_DURATION);
+        isGameOverRef.current = false;
         setIsGameOver(false);
-        // Find a starting position after dungeon generation
-        // Reset player position and rotation
         playerRotationY.current = 0;
-
-         // Re-enable controls listener after intro
-         const handleKeyDown = (event: KeyboardEvent) => {
-             keysPressedRef.current[event.key.toLowerCase()] = true;
-             const key = event.key.toLowerCase();
-             switch (key) {
-                 case 'w': moveForward.current = true; break;
-                 case 's': moveBackward.current = true; break;
-                 case 'arrowleft': rotateLeft.current = true; break;
-                 case 'arrowright': rotateRight.current = true; break;
-             }
-         };
-         const handleKeyUp = (event: KeyboardEvent) => {
-             keysPressedRef.current[event.key.toLowerCase()] = false;
-             const key = event.key.toLowerCase();
-             switch (key) {
-                 case 'w': moveForward.current = false; break;
-                 case 's': moveBackward.current = false; break;
-                 case 'arrowleft': rotateLeft.current = false; break;
-                 case 'arrowright': rotateRight.current = false; break;
-             }
-         };
-
-         window.addEventListener('keydown', handleKeyDown);
-         window.addEventListener('keyup', handleKeyUp);
-
-
-    }, []); // Add any dependencies if needed, e.g., functions to reset state
+    }, []);
 
 
     // Effect for dungeon generation and initial setup
@@ -223,7 +206,7 @@ function Game() {
         const initialWorldX = startX * TILE_SIZE;
         const initialWorldZ = startZ * TILE_SIZE;
         const initialPosition = new THREE.Vector3(initialWorldX, PLAYER_HEIGHT / 2, initialWorldZ);
-        setPlayerPosition(initialPosition);
+        playerPositionRef.current = initialPosition;
         setPlayerGridPos({ x: startX, z: startZ }); // Set initial grid pos for minimap
 
 
@@ -344,7 +327,34 @@ function Game() {
             });
         });
         setInteractableObjects(objects);
+        interactableObjectsRef.current = objects;
+        dungeonRef.current = generatedDungeon;
 
+
+        // Keyboard handlers
+        const handleKeyDown = (event: KeyboardEvent) => {
+            keysPressedRef.current[event.key.toLowerCase()] = true;
+            const key = event.key.toLowerCase();
+            switch (key) {
+                case 'w': moveForward.current = true; break;
+                case 's': moveBackward.current = true; break;
+                case 'arrowleft': rotateLeft.current = true; break;
+                case 'arrowright': rotateRight.current = true; break;
+            }
+        };
+        const handleKeyUp = (event: KeyboardEvent) => {
+            keysPressedRef.current[event.key.toLowerCase()] = false;
+            const key = event.key.toLowerCase();
+            switch (key) {
+                case 'w': moveForward.current = false; break;
+                case 's': moveBackward.current = false; break;
+                case 'arrowleft': rotateLeft.current = false; break;
+                case 'arrowright': rotateRight.current = false; break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
 
         // Handle window resize
         const handleResize = () => {
@@ -374,7 +384,7 @@ function Game() {
                      moveDirection.normalize();
                  }
 
-                 const currentPos = playerPosition.clone(); // Get current position
+                 const currentPos = playerPositionRef.current.clone(); // Get current position
                  const nextPos = currentPos.clone(); // Calculate potential next position
 
                  if (moveForward.current) {
@@ -420,7 +430,7 @@ function Game() {
 
                 // Collision detection
                 if (!isWallCollision(nextPos, generatedDungeon)) {
-                     setPlayerPosition(nextPos); // Update state only if no collision
+                     playerPositionRef.current = nextPos;
                  } else {
                      distanceMoved = 0; // Don't decay light if movement was blocked
                  }
@@ -441,8 +451,9 @@ function Game() {
                  }
 
                 // Decrease light duration based on distance moved
-                 if (distanceMoved > 0 && !isGameOver) {
-                     setLightDuration(prev => Math.max(0, prev - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED));
+                 if (distanceMoved > 0 && !isGameOverRef.current) {
+                     lightDurationRef.current = Math.max(0, lightDurationRef.current - distanceMoved * LIGHT_DECAY_PER_UNIT_MOVED);
+                     setLightDurationHud(lightDurationRef.current);
                  }
              }
          };
@@ -516,9 +527,13 @@ function Game() {
          let animationFrameId: number;
          const clock = new THREE.Clock();
 
+         let lastGridX = -1;
+         let lastGridZ = -1;
+
          const animate = () => {
-             if (showIntro || isGameOver) {
-                 animationFrameId = requestAnimationFrame(animate);
+             animationFrameId = requestAnimationFrame(animate);
+
+             if (showIntroRef.current || isGameOverRef.current) {
                  // Still render the scene even if paused or intro is shown
                  if (rendererRef.current && sceneRef.current && cameraRef.current) {
                      rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -526,134 +541,119 @@ function Game() {
                  return;
              }
 
-
             const delta = clock.getDelta();
+            const pos = playerPositionRef.current;
+            const light = lightDurationRef.current;
+            const objects = interactableObjectsRef.current;
 
              // Update controls (movement/rotation)
              controlsRef.current?.update(delta);
 
-
-             // Update player position and camera based on state/refs
+             // Update player position and camera based on refs
              if (cameraRef.current && playerLightRef.current) {
-                 // Camera follows player position but maintains eye level and rotation
-                 cameraRef.current.position.x = playerPosition.x;
-                 cameraRef.current.position.z = playerPosition.z;
-                 cameraRef.current.position.y = CAMERA_EYE_LEVEL; // Keep camera at fixed height
+                 cameraRef.current.position.x = pos.x;
+                 cameraRef.current.position.z = pos.z;
+                 cameraRef.current.position.y = CAMERA_EYE_LEVEL;
 
-                // Update light position to follow camera/player head
-                 playerLightRef.current.position.x = playerPosition.x;
-                 playerLightRef.current.position.z = playerPosition.z;
-                 playerLightRef.current.position.y = CAMERA_EYE_LEVEL + 0.1; // Slightly above camera
+                 playerLightRef.current.position.x = pos.x;
+                 playerLightRef.current.position.z = pos.z;
+                 playerLightRef.current.position.y = CAMERA_EYE_LEVEL + 0.1;
 
-                 // Update player representation position if it exists
-                 // if (playerRef.current) {
-                 //    playerRef.current.position.copy(playerPosition);
-                 // }
-
-                // Update player's grid position for minimap
-                 const currentGridX = Math.floor(playerPosition.x / TILE_SIZE + 0.5);
-                 const currentGridZ = Math.floor(playerPosition.z / TILE_SIZE + 0.5);
-                 if (currentGridX !== playerGridPos.x || currentGridZ !== playerGridPos.z) {
+                 // Update player's grid position for minimap
+                 const currentGridX = Math.floor(pos.x / TILE_SIZE + 0.5);
+                 const currentGridZ = Math.floor(pos.z / TILE_SIZE + 0.5);
+                 if (currentGridX !== lastGridX || currentGridZ !== lastGridZ) {
+                     lastGridX = currentGridX;
+                     lastGridZ = currentGridZ;
                      setPlayerGridPos({ x: currentGridX, z: currentGridZ });
 
-                    // Discover new tiles around the player
-                     const discoveryRadius = 2; // How many tiles around the player to reveal
-                     for (let dz = -discoveryRadius; dz <= discoveryRadius; dz++) {
-                         for (let dx = -discoveryRadius; dx <= discoveryRadius; dx++) {
-                             const discoverX = currentGridX + dx;
-                             const discoverZ = currentGridZ + dz;
-                             const key = getTileKey(discoverX, discoverZ);
-                             if (!discoveredTiles.has(key)) {
-                                 setDiscoveredTiles(prev => new Set(prev).add(key));
+                     // Discover new tiles around the player
+                     const discoveryRadius = 2;
+                     setDiscoveredTiles(prev => {
+                         const next = new Set(prev);
+                         for (let dz = -discoveryRadius; dz <= discoveryRadius; dz++) {
+                             for (let dx = -discoveryRadius; dx <= discoveryRadius; dx++) {
+                                 next.add(getTileKey(currentGridX + dx, currentGridZ + dz));
                              }
                          }
-                     }
+                         return next;
+                     });
                  }
-
              }
 
              // Update Light Intensity & Distance based on lightDuration
              if (playerLightRef.current) {
-                 const lightRatio = lightDuration / MAX_LIGHT_DURATION;
-                 // Use Math.pow for a non-linear falloff (e.g., faster dimming initially)
-                 const easedRatio = Math.pow(lightRatio, 1.5); // Adjust exponent for desired curve
+                 const lightRatio = light / MAX_LIGHT_DURATION;
+                 const easedRatio = Math.pow(lightRatio, 1.5);
 
-                const currentIntensity = THREE.MathUtils.lerp(MIN_PLAYER_LIGHT_INTENSITY, MAX_PLAYER_LIGHT_INTENSITY, easedRatio);
-                const currentDistance = THREE.MathUtils.lerp(MIN_PLAYER_LIGHT_DISTANCE, MAX_PLAYER_LIGHT_DISTANCE, easedRatio);
+                 const currentIntensity = THREE.MathUtils.lerp(MIN_PLAYER_LIGHT_INTENSITY, MAX_PLAYER_LIGHT_INTENSITY, easedRatio);
+                 const currentDistance = THREE.MathUtils.lerp(MIN_PLAYER_LIGHT_DISTANCE, MAX_PLAYER_LIGHT_DISTANCE, easedRatio);
 
                  playerLightRef.current.intensity = currentIntensity;
                  playerLightRef.current.distance = currentDistance;
 
                  // Make orb lights visible/invisible based on player light
-                 interactableObjects.forEach(obj => {
+                 objects.forEach(obj => {
                      if (obj.light) {
                          obj.light.visible = currentIntensity > MIN_PLAYER_LIGHT_INTENSITY;
                      }
-                      if (obj.mesh) {
-                          // Make orb mesh dimmer/less emissive when player light is out
-                          const orbMat = obj.mesh.material as THREE.MeshStandardMaterial;
-                          orbMat.emissiveIntensity = currentIntensity > MIN_PLAYER_LIGHT_INTENSITY ? 0.5 : 0.05; // Much dimmer when dark
-                           // Optional: reduce visibility slightly too
-                           // orbMat.opacity = currentIntensity > MIN_PLAYER_LIGHT_INTENSITY ? 1.0 : 0.7;
-                           // orbMat.transparent = currentIntensity <= MIN_PLAYER_LIGHT_INTENSITY;
-                      }
+                     if (obj.mesh) {
+                         const orbMat = obj.mesh.material as THREE.MeshStandardMaterial;
+                         orbMat.emissiveIntensity = currentIntensity > MIN_PLAYER_LIGHT_INTENSITY ? 0.5 : 0.05;
+                     }
                  });
              }
 
-
              // Check for game over
-             if (lightDuration <= 0 && !isGameOver) {
+             if (light <= 0 && !isGameOverRef.current) {
+                 isGameOverRef.current = true;
                  setIsGameOver(true);
-                 toast({
+                 toastRef.current({
                      title: "Engulfed by Darkness",
                      description: "Your light has faded completely.",
                      variant: "destructive",
                  });
-                 // Optionally: Transition back to menu after a delay
-                 setTimeout(() => setShowIntro(true), 3000);
+                 setTimeout(() => {
+                     showIntroRef.current = true;
+                     setShowIntro(true);
+                 }, 3000);
              }
 
              // Check for interaction with light orbs
-             const objectsToRemove: number[] = [];
-             interactableObjects.forEach((obj) => {
-                  if (!obj.used && obj.mesh.visible && playerPosition.distanceTo(obj.mesh.position) < COLLECTION_DISTANCE) {
+             objects.forEach((obj) => {
+                 if (!obj.used && obj.mesh.visible && pos.distanceTo(obj.mesh.position) < COLLECTION_DISTANCE) {
                      const lightValue = ORB_SIZES[obj.size].lightValue;
-                     setLightDuration(prev => Math.min(MAX_LIGHT_DURATION, prev + lightValue));
-                     obj.used = true; // Mark as used
-                      obj.mesh.visible = false; // Hide the mesh
-                      if (obj.light) obj.light.visible = false; // Hide the light
-                     objectsToRemove.push(obj.id); // Schedule for removal from scene later if needed, though hiding is usually sufficient
+                     lightDurationRef.current = Math.min(MAX_LIGHT_DURATION, lightDurationRef.current + lightValue);
+                     setLightDurationHud(lightDurationRef.current);
+                     obj.used = true;
+                     obj.mesh.visible = false;
+                     if (obj.light) obj.light.visible = false;
 
-                    toast({
-                        title: `Light Orb Collected! (+${lightValue})`,
-                        description: `Your light meter is now ${Math.min(MAX_LIGHT_DURATION, lightDuration + lightValue).toFixed(0)}%`,
-                    });
+                     toastRef.current({
+                         title: `Light Orb Collected! (+${lightValue})`,
+                         description: `Your light meter is now ${lightDurationRef.current.toFixed(0)}%`,
+                     });
                  }
              });
 
-            // Animate orbs (pulse and hover)
-            const time = clock.getElapsedTime();
-            interactableObjects.forEach(obj => {
-                if (!obj.used && obj.mesh.visible) { // Only animate visible, unused orbs
-                    // Pulsing light intensity
-                    if(obj.light) {
-                        obj.light.intensity = ORB_BASE_INTENSITY + Math.sin(time * ORB_PULSE_SPEED + obj.id) * ORB_PULSE_AMOUNT;
-                    }
-                     // Hovering mesh position
+             // Animate orbs (pulse and hover)
+             const time = clock.getElapsedTime();
+             objects.forEach(obj => {
+                 if (!obj.used && obj.mesh.visible) {
+                     if (obj.light) {
+                         obj.light.intensity = ORB_BASE_INTENSITY + Math.sin(time * ORB_PULSE_SPEED + obj.id) * ORB_PULSE_AMOUNT;
+                     }
                      obj.mesh.position.y = obj.baseY + Math.sin(time * ORB_HOVER_SPEED + obj.id * 0.5) * ORB_HOVER_AMOUNT;
-                      if(obj.light) {
-                         obj.light.position.y = obj.mesh.position.y; // Keep light at mesh position
-                      }
-                }
-            });
-
+                     if (obj.light) {
+                         obj.light.position.y = obj.mesh.position.y;
+                     }
+                 }
+             });
 
              // Render the scene
              if (rendererRef.current && sceneRef.current && cameraRef.current) {
                  rendererRef.current.render(sceneRef.current, cameraRef.current);
              }
-
-             animationFrameId = requestAnimationFrame(animate);
          };
 
          animate();
@@ -661,18 +661,7 @@ function Game() {
          return () => {
              cancelAnimationFrame(animationFrameId);
          };
-     }, [playerPosition, dungeon, interactableObjects, lightDuration, isGameOver, showIntro, toast, playerGridPos.x, playerGridPos.z, discoveredTiles]); // Include dependencies that the loop uses
-
-
-    // Cleanup on component unmount
-    useEffect(() => {
-        return () => {
-            // Ensure all listeners and resources are cleaned up
-             rendererRef.current?.dispose();
-             sceneRef.current?.clear();
-             // Remove global event listeners if any were added outside of other useEffects
-        };
-    }, []);
+     }, []); // Empty dependency array - all state read from refs
 
 
     return (
@@ -691,10 +680,10 @@ function Game() {
                          interactableObjects={interactableObjects}
                          discoveredTiles={discoveredTiles}
                          getTileKey={getTileKey}
-                         isPlayerLightOut={lightDuration <= 0} // Pass light status
+                         isPlayerLightOut={lightDurationHud <= 0} // Pass light status
                      />
                      <LightMeter
-                         lightDuration={lightDuration}
+                         lightDuration={lightDurationHud}
                          maxLightDuration={MAX_LIGHT_DURATION}
                      />
                 </>
