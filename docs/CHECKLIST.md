@@ -13,15 +13,15 @@
 - [x] 1.3 Fix keyboard listener memory leak (moved to useEffect scope)
 - [x] 1.4 Fix stale closure on `playerPosition` (converted to useRef)
 - [x] 1.5 Fix animation loop dependency array (use refs instead of state)
-- [ ] 1.6 Full build + runtime verification
+- [x] 1.6 Full build + runtime verification
 
 ## Phase 2: Dependency Cleanup
-- [ ] 2.1 Remove unused npm packages (~20 packages)
-- [ ] 2.2 Delete `src/ai/` directory
-- [ ] 2.3 Delete unused shadcn UI components
-- [ ] 2.4 Remove unused package.json scripts
-- [ ] 2.5 Install new dependencies (zustand, vitest, playwright)
-- [ ] 2.6 Verify build passes after cleanup
+- [x] 2.1 Remove unused npm packages (~20 packages)
+- [x] 2.2 Delete `src/ai/` directory
+- [x] 2.3 Delete unused shadcn UI components
+- [x] 2.4 Remove unused package.json scripts
+- [x] 2.5 Install new dependencies (zustand, vitest, playwright)
+- [x] 2.6 Verify build passes after cleanup
 
 ## Phase 3: Refactor - Module Extraction
 - [ ] 3.1 Create `src/lib/game/constants.ts`
