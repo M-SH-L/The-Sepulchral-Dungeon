@@ -4,7 +4,7 @@ export enum DungeonTile {
     Corridor = ',',
 }
 
-interface Room {
+export interface Room {
     x: number;
     y: number;
     width: number;

@@ -2,28 +2,18 @@
 import React from 'react';
 import { DungeonTile } from './dungeon-generator';
 import { cn } from '@/lib/utils';
-import type * as THREE from 'three';
-
-type OrbSize = 'small' | 'medium' | 'large';
-
-interface InteractableObjectData {
-    mesh: THREE.Mesh;
-    id: number;
-    size: OrbSize; // Keep size property
-    used?: boolean; // Optional, depending on where filtering occurs
-    visible?: boolean; // Optional
-}
+import type { OrbData, OrbSize } from '@/lib/game/types';
 
 interface MinimapProps {
     dungeon: DungeonTile[][];
-    playerX: number; // Player's grid X coordinate
-    playerZ: number; // Player's grid Z coordinate
-    viewRadius: number; // How many tiles to show around the player
-    tileSize: number; // World scale tile size
-    interactableObjects: InteractableObjectData[]; // List might include used/hidden objects
-    discoveredTiles: Set<string>; // Set of discovered tile keys ('x,z')
-    getTileKey: (x: number, z: number) => string; // Function to generate tile keys
-    isPlayerLightOut: boolean; // New prop to indicate if player light is zero
+    playerX: number;
+    playerZ: number;
+    viewRadius: number;
+    tileSize: number;
+    interactableObjects: OrbData[];
+    discoveredTiles: Set<string>;
+    getTileKey: (x: number, z: number) => string;
+    isPlayerLightOut: boolean;
 }
 
 const Minimap: React.FC<MinimapProps> = ({

@@ -24,22 +24,22 @@
 - [x] 2.6 Verify build passes after cleanup
 
 ## Phase 3: Refactor - Module Extraction
-- [ ] 3.1 Create `src/lib/game/constants.ts`
-- [ ] 3.2 Create `src/lib/game/types.ts`
-- [ ] 3.3 Create `src/lib/game/game-store.ts` (Zustand)
-- [ ] 3.4 Extract `src/lib/game/collision.ts`
-- [ ] 3.5 Extract `src/lib/game/input-handler.ts`
-- [ ] 3.6 Extract `src/lib/game/light-system.ts`
-- [ ] 3.7 Extract `src/lib/game/fog-of-war.ts`
-- [ ] 3.8 Extract `src/lib/game/scene-builder.ts` (with batching)
-- [ ] 3.9 Extract `src/lib/game/orb-manager.ts`
-- [ ] 3.10 Extract `src/lib/game/player-controller.ts`
-- [ ] 3.11 Extract `src/lib/game/renderer.ts`
-- [ ] 3.12 Extract `src/lib/game/game-loop.ts`
-- [ ] 3.13 Rewrite `Game.tsx` as thin shell
-- [ ] 3.14 Extract `IntroScreen.tsx`
-- [ ] 3.15 Extract `GameOverOverlay.tsx`
-- [ ] 3.16 Verify game plays identically post-refactor
+- [x] 3.1 Create `src/lib/game/constants.ts`
+- [x] 3.2 Create `src/lib/game/types.ts`
+- [x] 3.3 Create `src/lib/game/game-store.ts` (Zustand)
+- [x] 3.4 Extract `src/lib/game/collision.ts`
+- [x] 3.5 Extract `src/lib/game/input-handler.ts`
+- [x] 3.6 Extract `src/lib/game/light-system.ts`
+- [x] 3.7 Extract `src/lib/game/fog-of-war.ts`
+- [x] 3.8 Extract `src/lib/game/scene-builder.ts` (with batching)
+- [x] 3.9 Extract `src/lib/game/orb-manager.ts`
+- [x] 3.10 Extract `src/lib/game/player-controller.ts`
+- [x] 3.11 Extract `src/lib/game/renderer.ts`
+- [x] 3.12 Extract `src/lib/game/game-loop.ts`
+- [x] 3.13 Rewrite `Game.tsx` as thin shell
+- [x] 3.14 Extract `IntroScreen.tsx`
+- [x] 3.15 Extract `GameOverOverlay.tsx`
+- [x] 3.16 Verify game plays identically post-refactor
 
 ## Phase 4: Performance Optimizations
 - [ ] 4.1 Geometry batching (walls + floors merged)
